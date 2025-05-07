@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package ms_kpir;
+
+// Message representing the query sent by the client to a server.
+// It contains the DPF key, which the server uses to process the database.
+message Query {
+  bytes dpf_key = 1;  // The DPF key as a byte array
+}
+
+// Message representing the answer returned by the server to the client.
+// It contains the data computed by the server based on the DPF key.
+message Answer {
+  bytes data = 1;  // The server's response as a byte array
+}
+
+// Service definition for the PIR server.
+// Each server in the multi-server setup implements this service.
+service PIRService {
+  // RPC method where the server receives a Query and returns an Answer.
+  rpc PirQuery(Query) returns (Answer);
+}
