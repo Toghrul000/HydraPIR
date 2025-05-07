@@ -3,7 +3,16 @@ name = "kpir"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    "cuckoo_lib",
+    "dpf_half_tree_lib"
+    # Add other library or binary directories here if they are direct children
+]
+
 [dependencies]
+cuckoo_lib = { path = "cuckoo_lib" }
+dpf_half_tree_lib = { path = "dpf_half_tree_lib" }
 prost = "0.13.5"
 tokio = { version="1", features = ["full"]}
 tonic = "0.13.0"

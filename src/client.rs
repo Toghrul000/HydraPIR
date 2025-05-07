@@ -1,4 +1,3 @@
-use tonic::transport::Channel;
 use crate::ms_kpir::pir_service_client::PirServiceClient;
 use crate::ms_kpir::Query;
 

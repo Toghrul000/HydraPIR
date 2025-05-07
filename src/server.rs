@@ -1,13 +1,13 @@
 use tonic::{Request, Response, Status};
 use crate::ms_kpir::{Query, Answer};
-use crate::ms_kpir::pir_service_server::{PirService, PirServiceServer};
+use crate::ms_kpir::pir_service_server::PirService;
 
 #[derive(Debug, Default)]
 pub struct MyPIRService {}
 
 #[tonic::async_trait]
 impl PirService for MyPIRService {
-    async fn answer_query(
+    async fn pir_query(
         &self,
         request: Request<Query>,
     ) -> Result<Response<Answer>, Status> {
