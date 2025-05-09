@@ -6,6 +6,9 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
+use std::sync::Mutex;
 
 
 // --- Constants related to the Algorithm (can be adjusted here) ---
@@ -162,13 +165,14 @@ pub fn decode_entry<const N: usize>(
 ///
 /// Generic over `N`, the number of `u64` elements per entry.
 /// The total byte size per entry is `N * 8`.
+#[derive(Debug)]
 pub struct CuckooHashTable<const N: usize> {
     pub table: Vec<Entry<N>>,
     pub table_size: usize, // Must be power of 2
     pub mask: usize,       // table_size - 1
     pub num_hashes: usize,
     pub hash_keys: Vec<[u8; 16]>,
-    rng: ThreadRng,
+    rng: Mutex<StdRng>,
 }
 
 impl<const N: usize> CuckooHashTable<N> {
@@ -197,7 +201,7 @@ impl<const N: usize> CuckooHashTable<N> {
             return Err("Number of hashes must be greater than 0".to_string());
         }
 
-        let mut rng = rand::rng();
+        let mut rng = StdRng::from_os_rng();
         let hash_keys = (0..num_hashes)
             .map(|_| {
                 let mut key = [0u8; 16];
@@ -212,7 +216,7 @@ impl<const N: usize> CuckooHashTable<N> {
             mask: table_size - 1,
             num_hashes,
             hash_keys,
-            rng,
+            rng: Mutex::new(rng),
         })
     }
 
@@ -296,7 +300,10 @@ impl<const N: usize> CuckooHashTable<N> {
             }
 
             // 2. No empty slot found, must displace.
-            let evict_hash_index = self.rng.random_range(0..self.num_hashes); // Use random eviction
+            let evict_hash_index = {
+                let mut rng = self.rng.lock().unwrap();
+                rng.random_range(0..self.num_hashes)
+            };
             let evict_index = self.hash(&current_key, evict_hash_index);
 
             let displaced_entry_data = self.table[evict_index]; // Copy the [u64; N]
@@ -332,7 +339,7 @@ impl<const N: usize> CuckooHashTable<N> {
 
 
     /// Inserts a key-value pair (both Strings) using hybrid cycle detection.
-    pub fn insert_tracked(&mut self, key: String, value: String) -> Result<(), CuckooError> {
+    pub fn insert_tracked(&mut self, key: String, value: String, deterministic_eviction_seed: Option<&[u8; 16]>) -> Result<(), CuckooError> {
         // Define empty slot locally based on N for comparison
         let EMPTY_SLOT_N: Entry<N> = [0u64; N];
 
@@ -355,7 +362,21 @@ impl<const N: usize> CuckooHashTable<N> {
             }
 
             // Determine eviction target
-            let evict_hash_index = self.rng.random_range(0..self.num_hashes);
+            let evict_hash_index: usize;
+            if let Some(seed) = deterministic_eviction_seed {
+                // Deterministic eviction choice
+                let mut hasher = SipHasher24::new_with_key(seed);
+                current_key.hash(&mut hasher); // Hash current key
+                displacement_count.hash(&mut hasher); // Hash displacement count for variance
+                evict_hash_index = hasher.finish() as usize % self.num_hashes;
+            } else {
+                // Random eviction choice using the table's RNG
+                evict_hash_index = {
+                    let mut rng = self.rng.lock().unwrap();
+                    rng.random_range(0..self.num_hashes)
+                };
+            }
+            
             let evict_index = self.hash(&current_key, evict_hash_index);
              if evict_index >= self.table_size {
                  // Should not happen with correct masking, indicates potential issue
@@ -411,6 +432,117 @@ impl<const N: usize> CuckooHashTable<N> {
         )))
     }
 
+
+    /// Inserts a key-value pair (both Strings) using hybrid cycle detection,
+    /// and returns a log of changes made to the table upon successful insertion.
+    ///
+    /// # Returns
+    /// * `Ok(Vec<(usize, Entry<N>)>)` - On success, a vector where each tuple is
+    ///   `(index_modified, new_value_written_to_index)`.
+    /// * `Err(CuckooError)` - If insertion fails.
+    pub fn insert_tracked_with_log(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<Vec<(usize, Entry<N>)>, CuckooError> {
+        let EMPTY_SLOT_N: Entry<N> = [0u64; N];
+
+        let mut current_entry_data = encode_entry::<N>(&key, &value)?;
+        let mut current_key = key.clone();
+
+        // For reverting changes if the entire insertion process fails
+        let mut displacement_path: Vec<(usize, Entry<N>)> = Vec::new();
+        // For logging successful changes
+        let mut change_log: Vec<(usize, Entry<N>)> = Vec::new();
+
+        let mut visited: Option<HashSet<(String, usize)>> = None;
+        let mut intended_path: Vec<(String, usize)> = Vec::new();
+
+        for displacement_count in 0..MAX_TRACKED_DISPLACEMENTS {
+            // --- Phase 1 & 2: Check for empty slot ---
+            for i in 0..self.num_hashes {
+                let index = self.hash(&current_key, i);
+                if index >= self.table_size { continue; } // Bounds check
+
+                if self.table[index] == EMPTY_SLOT_N {
+                    // Found an empty slot. This is the final placement for current_entry_data.
+                    // displacement_path.push((index, self.table[index])); // self.table[index] is EMPTY_SLOT_N
+                    self.table[index] = current_entry_data; // Perform the write
+                    change_log.push((index, current_entry_data)); // Log this successful write
+                    return Ok(change_log);
+                }
+            }
+
+            // --- Determine eviction target ---
+            let evict_hash_index = {
+                let mut rng = self.rng.lock().unwrap();
+                rng.random_range(0..self.num_hashes)
+            };
+            let evict_index = self.hash(&current_key, evict_hash_index);
+
+            if evict_index >= self.table_size {
+                self.revert_changes(&displacement_path);
+                return Err(CuckooError::InsertionFailed(format!(
+                    "Internal error: Calculated eviction index {} out of bounds for key '{}'",
+                    evict_index, current_key
+                )));
+            }
+
+            let target_key_index_pair = (current_key.clone(), evict_index);
+            intended_path.push(target_key_index_pair.clone());
+
+            // --- Phase 2: Cycle Detection Logic ---
+            if displacement_count >= MAX_DISPLACEMENTS {
+                if visited.is_none() {
+                    let mut initial_visited = HashSet::with_capacity(intended_path.len());
+                    for item in &intended_path { initial_visited.insert(item.clone()); }
+                    visited = Some(initial_visited);
+                }
+                if let Some(ref mut visited_set) = visited {
+                    if visited_set.contains(&target_key_index_pair) {
+                        self.revert_changes(&displacement_path); // Revert all previous displacements
+                        return Err(CuckooError::InsertionFailed(format!(
+                            "Cycle detected for key '{}' at index {}", current_key, evict_index
+                        )));
+                    }
+                    visited_set.insert(target_key_index_pair);
+                }
+            }
+
+            // --- Displace the entry ---
+            // current_entry_data is what we are trying to place in this step.
+            // It will overwrite the entry at evict_index.
+            let displaced_entry_data = self.table[evict_index]; // This is the old value being kicked out
+
+            // For reverting: store the old value that was at evict_index
+            displacement_path.push((evict_index, displaced_entry_data));
+
+            // Perform the write: current_entry_data goes into evict_index
+            self.table[evict_index] = current_entry_data;
+
+            // For logging: record that current_entry_data was written to evict_index
+            change_log.push((evict_index, current_entry_data));
+
+            // The displaced entry becomes the new entry we need to find a home for
+            current_entry_data = displaced_entry_data;
+            match decode_entry(&current_entry_data)? {
+                 Some((displaced_key, _)) => current_key = displaced_key,
+                 None => {
+                    self.revert_changes(&displacement_path);
+                    return Err(CuckooError::InsertionFailed(
+                        "Displaced an entry that unexpectedly decoded as empty".to_string()
+                    ));
+                 }
+            }
+        } // End displacement loop
+
+        // If loop finishes, MAX_TRACKED_DISPLACEMENTS reached
+        self.revert_changes(&displacement_path); // Revert all changes made
+        Err(CuckooError::InsertionFailed(format!(
+            "Max tracked displacements ({}) reached for key '{}'", MAX_TRACKED_DISPLACEMENTS, current_key
+        )))
+    }
+
     /// Calculates the current load factor (0.0 to 1.0).
     pub fn load_factor(&self) -> f64 {
         // Define empty slot locally based on N for comparison
@@ -437,7 +569,8 @@ impl<const N: usize> CuckooHashTable<N> {
         let mut new_keys = Vec::with_capacity(self.num_hashes);
         for _ in 0..self.num_hashes {
             let mut key = [0u8; 16];
-            self.rng.fill_bytes(&mut key);
+            let mut rng = self.rng.lock().unwrap();
+            rng.fill_bytes(&mut key);
             new_keys.push(key);
         }
 
@@ -448,7 +581,7 @@ impl<const N: usize> CuckooHashTable<N> {
             mask: self.mask,
             num_hashes: self.num_hashes,
             hash_keys: new_keys.clone(),
-            rng: rand::rng(),
+            rng: Mutex::new(StdRng::from_os_rng()),
         };
 
         let old_table_data = std::mem::take(&mut self.table);
@@ -462,7 +595,7 @@ impl<const N: usize> CuckooHashTable<N> {
                 match decode_entry(entry_data) { // Use generic decode
                     Ok(Some((key, value))) => {
                         // Use insert_tracked on the temp table
-                        if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value) {
+                        if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "Failed re-insert key '{}': {:?}", key, insert_err
                             )));
@@ -596,7 +729,8 @@ impl<const N: usize> CuckooHashTable<N> {
         let mut new_keys = Vec::with_capacity(self.num_hashes);
         for _ in 0..self.num_hashes {
             let mut key = [0u8; 16];
-            self.rng.fill_bytes(&mut key);
+            let mut rng = self.rng.lock().unwrap();
+            rng.fill_bytes(&mut key);
             new_keys.push(key);
         }
 
@@ -606,7 +740,7 @@ impl<const N: usize> CuckooHashTable<N> {
             mask: self.mask,
             num_hashes: self.num_hashes,
             hash_keys: new_keys.clone(), // Use new keys for temp table
-            rng: rand::rng(), // Fresh rng for temp table operations
+            rng: Mutex::new(StdRng::from_os_rng()), // Fresh rng for temp table operations
         };
 
         let old_table_data = std::mem::take(&mut self.table);
@@ -619,7 +753,7 @@ impl<const N: usize> CuckooHashTable<N> {
             if entry_data != &EMPTY_SLOT_N {
                 match decode_entry(entry_data) {
                     Ok(Some((key, value))) => {
-                        if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value) {
+                        if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "(Phase 1) Failed re-insert key '{}': {:?}", key, insert_err
                             )));
@@ -653,7 +787,7 @@ impl<const N: usize> CuckooHashTable<N> {
         println!("    -> Starting Phase 2: Inserting {} previously failed items...", keys_failed_insertion.len());
         let mut failed_inserted_count = 0;
         for (key, value) in keys_failed_insertion.iter() { // Iterate over borrowed list
-             if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value.clone()) {
+             if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value.clone(), None) {
                  // If inserting a previously failed item fails *now*, the whole attempt fails
                  error_occurred = Some(CuckooError::RehashFailed(format!(
                      "(Phase 2) Failed inserting previously failed key '{}': {:?}", key, insert_err
@@ -800,6 +934,10 @@ impl<const N: usize> CuckooHashTable<N> {
     }
 }
 
+// Add these traits to make CuckooHashTable thread-safe
+unsafe impl<const N: usize> Send for CuckooHashTable<N> {}
+unsafe impl<const N: usize> Sync for CuckooHashTable<N> {}
+
 // --- Public Helper Function ---
 
 /// Calculates the required table size (power of 2) and the corresponding
@@ -854,142 +992,3 @@ pub fn calculate_required_table_size(
 }
 
 
-pub fn fill_cuckoo_from_csv<const N: usize>(
-    cuckoo_table: &mut CuckooHashTable<N>,
-    csv_file_path: &str,
-    max_rehash_attempts_per_config: usize,
-) -> Result<(usize, usize), Box<dyn Error>> { // Return counts on success
-
-    println!("\n--- Performing Insertions from {} ---", csv_file_path);
-    let mut successful_insertions = 0;
-    let mut failed_insertions_count = 0; // Track count, not just bool
-    let mut line_count = 0;
-    let mut keys_failed_insertion: Vec<(String, String)> = Vec::new();
-
-    // --- File Reading and Initial Insertions ---
-    if !std::path::Path::new(csv_file_path).exists() {
-        // Handle missing file - maybe return an error or specific status
-        return Err(Box::<dyn Error>::from(format!(
-            "CSV file not found at '{}'",
-            csv_file_path
-        )));
-    }
-
-    let file = std::fs::File::open(csv_file_path)?;
-    let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(file);
-
-    for result in rdr.records() {
-        line_count += 1;
-        let record = result?;
-
-        // Use map_err to convert Option error to Box<dyn Error> for ?
-        let key = record
-            .get(0)
-            .ok_or_else(|| Box::<dyn Error>::from("Missing key column in CSV"))?
-            .trim() // Trim whitespace from key
-            .to_string();
-        let value = record
-            .get(1)
-            .ok_or_else(|| Box::<dyn Error>::from("Missing value column in CSV"))?
-            .to_string(); // Keep value as is
-
-        if key.is_empty() {
-            println!("Warning: Skipping line {} due to empty key.", line_count + 1);
-            continue;
-        }
-
-        // Use the library's insert method
-        match cuckoo_table.insert_tracked(key.clone(), value.clone()) {
-            Ok(_) => {
-                successful_insertions += 1;
-            }
-            Err(e @ CuckooError::InsertionFailed(_)) => {
-                if failed_insertions_count < 10 {
-                    eprintln!(
-                        "Insertion failed for key '{}' (line {}): {}",
-                        key,
-                        line_count + 1,
-                        e
-                    );
-                } else if failed_insertions_count == 10 {
-                    eprintln!("(Further insertion errors suppressed)");
-                }
-                failed_insertions_count += 1;
-                keys_failed_insertion.push((key, value));
-            }
-            Err(e) => {
-                 // Treat other CuckooErrors as potentially serious
-                 eprintln!("Unexpected Cuckoo error during insertion for key '{}': {}", key, e);
-                 // Option 1: Stop processing
-                 return Err(Box::new(e));
-                 // Option 2: Treat as failed insertion and continue
-                 // failed_insertions_count += 1;
-                 // keys_failed_insertion.push((key, value));
-            }
-        }
-
-        if line_count % 50000 == 0 {
-            println!(
-                "  Processed {} CSV records ({} successful, {} failed)... Load: {:.2}%",
-                line_count,
-                successful_insertions,
-                failed_insertions_count, // Use the count here
-                cuckoo_table.load_factor() * 100.0
-            );
-        }
-    }
-    println!("Finished processing {} CSV records.", line_count);
-
-    println!("--- Initial Insertion Summary ---");
-    println!("Successful Insertions: {}", successful_insertions);
-    println!("Failed Insertions (Initial): {}", failed_insertions_count);
-    println!("Load Factor Before Rehash Attempt: {:.2}%", cuckoo_table.load_factor() * 100.0);
-
-    // --- Attempt Rehash Loop WITH FAILED items ---
-    let mut final_failed_count = failed_insertions_count; // Initialize with initial failures
-
-    if !keys_failed_insertion.is_empty() {
-        println!(
-            "\n--- Attempting Rehash Loop WITH FAILED items ({}) ---",
-            keys_failed_insertion.len()
-        );
-
-        match cuckoo_table.rehash_loop_with_failed(
-            keys_failed_insertion, // Pass ownership
-            max_rehash_attempts_per_config
-        ) {
-            Ok(_) => {
-                println!("Rehash loop WITH FAILED items completed successfully.");
-                final_failed_count = 0; // All items were integrated
-            }
-            Err((e, still_failed_items)) => {
-                eprintln!("Rehash loop WITH FAILED items failed definitively: {}", e);
-                println!("Table state restored to before the last failed attempt within the loop.");
-                final_failed_count = still_failed_items.len(); // Update count
-                if !still_failed_items.is_empty() {
-                    eprintln!("{} items could not be inserted even after rehash loop:", final_failed_count);
-                    for (key, _) in still_failed_items.iter().take(5) { // Show remaining failed
-                        eprintln!("  - {}", key);
-                    }
-                    if final_failed_count > 5 { eprintln!("  ...") };
-                }
-                 // Option 1: Return Ok with the non-zero final_failed_count (as implemented now)
-                 // Option 2: Return an Err to signal the caller that not everything fit
-                 // return Err(Box::new(e));
-            }
-        }
-        println!(
-            "Final Load Factor after rehash loop attempt: {:.2}%",
-            cuckoo_table.load_factor() * 100.0
-        );
-        println!("Remaining failed insertions after loop: {}", final_failed_count);
-
-    } else if failed_insertions_count > 0 {
-         // This indicates a logic error if the count is > 0 but the list is empty
-         eprintln!("Warning: {} insertions reported failed, but the failed items list is empty before rehash.", failed_insertions_count);
-         final_failed_count = failed_insertions_count; // Keep the count as reported
-    }
-
-    // Return the initial success count and the final failed count
-    Ok((successful_insertions, final_failed_count))
-}

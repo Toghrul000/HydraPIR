@@ -14,9 +14,62 @@ message Answer {
   bytes data = 1;  // The server's response as a byte array
 }
 
+// Message for CSV row data
+message CsvRow {
+  string key = 1;
+  string value = 2;
+}
+
+// Message for server synchronization
+message ServerSync {
+  repeated string server_addresses = 1;
+}
+
+
+// Message for sync response
+message SyncResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Message for single entry update that includes the CSV row and server addresses
+message UpdateSingleEntryRequest {
+  CsvRow csv_row = 1;
+  bytes deterministic_eviction_seed = 2;
+}
+
+// A single chunk of data: an index and a byte array
+message ByteArrayEntry {
+  uint32 index = 1; // Index in the server's array
+  repeated uint64 value = 2;  // The u64 vabyte array itself
+}
+
+message ConfigData {
+  uint64 table_size = 1;
+  uint64 mask = 2;
+  uint64 num_hashes = 3;
+  repeated bytes hash_keys = 4; // Each 'bytes' entry is expected to be 16 bytes long
+}
+
+
+
+
 // Service definition for the PIR server.
 // Each server in the multi-server setup implements this service.
 service PIRService {
   // RPC method where the server receives a Query and returns an Answer.
   rpc PirQuery(Query) returns (Answer);
+  
+  // Stream CSV data to server
+  rpc StreamCsvData(stream CsvRow) returns (SyncResponse);
+  
+  // Send server addresses to first server
+  rpc SendServerAddresses(ServerSync) returns (SyncResponse);
+
+  // Services to send whole cuckoo table to other servers
+  rpc StreamByteArrays(stream ByteArrayEntry) returns (SyncResponse);
+  rpc SendConfiguration(ConfigData) returns (SyncResponse);
+
+  // Update a single entry in the Cuckoo hash table
+  rpc UpdateSingleEntry(UpdateSingleEntryRequest) returns (SyncResponse);
 }
