@@ -25,11 +25,24 @@ message ServerSync {
   repeated string server_addresses = 1;
 }
 
-
 // Message for sync response
 message SyncResponse {
   bool success = 1;
   string message = 2;
+}
+
+// Message for client session initialization request
+message ClientSessionInitRequest {
+  string client_id = 1;
+  bytes aes_key = 2;
+  bytes hash_key = 3;
+}
+
+// Message for client session initialization response
+message ClientSessionInitResponse {
+  uint32 num_buckets = 1;
+  uint32 bucket_size = 2;
+  uint32 bucket_bits = 3;
 }
 
 // Message for single entry update that includes the CSV row and server addresses
@@ -72,4 +85,7 @@ service PIRService {
 
   // Update a single entry in the Cuckoo hash table
   rpc UpdateSingleEntry(UpdateSingleEntryRequest) returns (SyncResponse);
+  
+  // Client session initialization
+  rpc InitClientSession(ClientSessionInitRequest) returns (ClientSessionInitResponse);
 }

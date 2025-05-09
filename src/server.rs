@@ -5,14 +5,21 @@ use cuckoo_lib::{
     calculate_required_table_size, CuckooHashTable, CuckooError,
 };
 use dpf_half_tree_lib::{self, calculate_pir_config};
+use std::collections::HashMap;
 
 use crate::ms_kpir::{
     Query, Answer, CsvRow, ServerSync, SyncResponse, ByteArrayEntry, ConfigData,
-    UpdateSingleEntryRequest,
+    UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse,
     pir_service_server::PirService,
     pir_service_client::PirServiceClient,
 };
 
+// Client session data
+#[derive(Debug, Clone)]
+struct ClientSession {
+    aes_key: Vec<u8>,
+    hash_key: Vec<u8>,
+}
 
 // --- Server Configuration ---
 const STORAGE_MB: u64 = 256;
@@ -27,6 +34,7 @@ pub struct MyPIRService {
     num_buckets: Arc<Mutex<usize>>,
     bucket_size: Arc<Mutex<usize>>,
     bucket_bits: Arc<Mutex<u32>>,
+    client_sessions: Arc<Mutex<HashMap<String, ClientSession>>>,
 }
 
 impl Default for MyPIRService {
@@ -61,6 +69,7 @@ impl Default for MyPIRService {
             num_buckets: Arc::new(Mutex::new(calculated_num_buckets)),
             bucket_size: Arc::new(Mutex::new(calculated_bucket_size)),
             bucket_bits: Arc::new(Mutex::new(calculated_bucket_bits)),
+            client_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -339,4 +348,36 @@ impl PirService for MyPIRService {
         }
     }
 
+    async fn init_client_session(
+        &self,
+        request: Request<ClientSessionInitRequest>,
+    ) -> Result<Response<ClientSessionInitResponse>, Status> {
+        let init_request = request.into_inner();
+        let client_id = init_request.client_id;
+        let aes_key = init_request.aes_key;
+        let hash_key = init_request.hash_key;
+        
+        // Store client session info
+        let session = ClientSession {
+            aes_key,
+            hash_key,
+        };
+        
+        {
+            let mut sessions = self.client_sessions.lock().await;
+            sessions.insert(client_id.clone(), session);
+            println!("Initialized session for client: {}", client_id);
+        }
+        
+        // Return PIR configuration parameters
+        let num_buckets = *self.num_buckets.lock().await as u32;
+        let bucket_size = *self.bucket_size.lock().await as u32;
+        let bucket_bits = *self.bucket_bits.lock().await;
+        
+        Ok(Response::new(ClientSessionInitResponse {
+            num_buckets,
+            bucket_size,
+            bucket_bits,
+        }))
+    }
 }
