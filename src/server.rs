@@ -1,17 +1,22 @@
 use std::sync::Arc;
+use dpf_half_tree_lib::calculate_pir_config;
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
 use cuckoo_lib::{
-    calculate_required_table_size, CuckooHashTable, CuckooError,
+    calculate_required_table_size, CuckooError, CuckooHashTableBucketed
 };
-use dpf_half_tree_lib::{self, calculate_pir_config};
+
 use std::collections::HashMap;
+use dpf_half_tree_lib::dmpf_pir_query_eval;
+use aes::Aes128;
+use aes::cipher::{KeyInit, generic_array::GenericArray};
 
 use crate::ms_kpir::{
-    Query, Answer, CsvRow, ServerSync, SyncResponse, ByteArrayEntry, ConfigData,
+    CsvRow, ServerSync, SyncResponse, ByteArrayEntry, ConfigData,
     UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse,
     pir_service_server::PirService,
     pir_service_client::PirServiceClient,
+    BucketKeys, ServerResponse, BucketEvalResult
 };
 
 // Client session data
@@ -19,6 +24,12 @@ use crate::ms_kpir::{
 struct ClientSession {
     aes_key: Vec<u8>,
     hash_key: Vec<u8>,
+}
+
+// Helper function to create aes instance
+fn create_aes(key: &[u8; 16]) -> Aes128 {
+    let aes_key = GenericArray::clone_from_slice(key);
+    Aes128::new(&aes_key)
 }
 
 // --- Server Configuration ---
@@ -30,7 +41,7 @@ const MAX_REHASH_ATTEMPTS_PER_CONFIG: usize = 1;
 
 #[derive(Debug)]
 pub struct MyPIRService {
-    cuckoo_table: Arc<Mutex<CuckooHashTable<ENTRY_U64_COUNT>>>,
+    cuckoo_table: Arc<Mutex<CuckooHashTableBucketed<ENTRY_U64_COUNT>>>,
     num_buckets: Arc<Mutex<usize>>,
     bucket_size: Arc<Mutex<usize>>,
     bucket_bits: Arc<Mutex<u32>>,
@@ -50,9 +61,6 @@ impl Default for MyPIRService {
             table_size * DESIRED_ENTRY_SIZE_BYTES
         );
 
-        let cuckoo_table = CuckooHashTable::<ENTRY_U64_COUNT>::new(table_size)
-            .expect("Failed to create CuckooHashTable");
-
         let (calculated_db_size, calculated_num_buckets, calculated_bucket_size, calculated_bucket_bits) = 
             calculate_pir_config(n_bits as usize);
 
@@ -63,6 +71,9 @@ impl Default for MyPIRService {
         println!("Calculated BUCKET_SIZE: {}", calculated_bucket_size);
         println!("Calculated BUCKET_BITS: {}", calculated_bucket_bits);
         println!("---------------------------------");
+
+        let cuckoo_table = CuckooHashTableBucketed::<ENTRY_U64_COUNT>::new(calculated_num_buckets, calculated_bucket_size)
+        .expect("Failed to create CuckooHashTable");
 
         Self {
             cuckoo_table: Arc::new(Mutex::new(cuckoo_table)),
@@ -78,16 +89,100 @@ impl Default for MyPIRService {
 impl PirService for MyPIRService {
     async fn pir_query(
         &self,
-        request: Request<Query>,
-    ) -> Result<Response<Answer>, Status> {
+        request: Request<BucketKeys>,
+    ) -> Result<Response<ServerResponse>, Status> {
         let query = request.into_inner();
-        println!("Received query with dpf_key: {:?}", query.dpf_key);
+        let client_id = query.client_id;
+        let server_id = query.server_id as usize;
+        let bucket_keys = query.bucket_key;
         
-        // TODO: Process the DPF key and perform the PIR query on the server's database.
-        // For now, simply return a dummy answer.
-        let data = b"dummy answer".to_vec();
-        let answer = Answer { data };
-
+        // Get hash key and AES key from client sessions
+        let (hash_key, aes_key) = {
+            let sessions = self.client_sessions.lock().await;
+            let session = sessions.get(&client_id).ok_or_else(|| {
+                Status::not_found(format!("Client session not found: {}", client_id))
+            })?;
+            
+            (session.hash_key.clone(), session.aes_key.clone())
+        };
+        
+        // Convert to fixed-size array
+        let hash_key: [u8; 16] = hash_key.try_into().map_err(|_| {
+            Status::internal("Invalid hash key size")
+        })?;
+        
+        // Create AES instance
+        let aes_key: [u8; 16] = aes_key.try_into().map_err(|_| {
+            Status::internal("Invalid AES key size")
+        })?;
+        let aes = create_aes(&aes_key);
+        
+        // Get table and configuration
+        let (table, num_buckets, bucket_size) = {
+            let cuckoo_table = self.cuckoo_table.lock().await;
+            let num_buckets = *self.num_buckets.lock().await;
+            let bucket_size = *self.bucket_size.lock().await;
+            
+            (cuckoo_table.table.clone(), num_buckets, bucket_size)
+        };
+        
+        // Convert protobuf DPFKey to Rust DPFKey
+        let dpf_keys = bucket_keys.into_iter().map(|proto_key| {
+            let mut cw_levels = Vec::new();
+            for cw in proto_key.cw_levels {
+                let level: [u8; 16] = cw.try_into().map_err(|_| {
+                    Status::internal("Invalid correction word size")
+                })?;
+                cw_levels.push(level);
+            }
+            
+            let cw_n_proto = proto_key.cw_n.ok_or_else(|| {
+                Status::internal("Missing CW_n in DPFKey")
+            })?;
+            
+            let hcw: [u8; 15] = cw_n_proto.hcw.try_into().map_err(|_| {
+                Status::internal("Invalid HCW size")
+            })?;
+            
+            let seed: [u8; 16] = proto_key.seed.try_into().map_err(|_| {
+                Status::internal("Invalid seed size")
+            })?;
+            
+            let cw_n = (hcw, cw_n_proto.lcw0 as u8, cw_n_proto.lcw1 as u8);
+            
+            Ok::<_, Status>(dpf_half_tree_lib::DPFKey {
+                n: proto_key.n as usize,
+                seed,
+                cw_levels,
+                cw_n,
+                cw_np1: proto_key.cw_np1,
+            })
+        }).collect::<Result<Vec<_>, _>>()?;
+        
+        
+        // Evaluate the query
+        let results = dmpf_pir_query_eval::<ENTRY_U64_COUNT>(
+            server_id,
+            &dpf_keys,
+            &table,
+            num_buckets,
+            bucket_size,
+            &hash_key,
+            &aes,
+        );
+        
+        // Convert to protobuf response format
+        let bucket_results = results.into_iter().map(|result| {
+            BucketEvalResult {
+                value: result.to_vec(),
+            }
+        }).collect();
+        
+        // Return the server response
+        let answer = ServerResponse {
+            bucket_result: bucket_results,
+        };
+        
         Ok(Response::new(answer))
     }
 
@@ -215,11 +310,15 @@ impl PirService for MyPIRService {
             let table_data = {
                 let cuckoo_table = self.cuckoo_table.lock().await;
                 let table: Vec<_> = cuckoo_table.table.iter().map(|arr| arr.to_vec()).collect();
-                let hash_keys: Vec<Vec<u8>> = cuckoo_table.hash_keys.iter().map(|key| key.to_vec()).collect();
+                let local_hash_keys: Vec<Vec<u8>> = cuckoo_table.local_hash_keys.iter().map(|key| key.to_vec()).collect();
                 let table_size = cuckoo_table.table_size;
                 let mask = cuckoo_table.mask;
-                let num_hashes = cuckoo_table.num_hashes;
-                (table, hash_keys, table_size, mask, num_hashes)
+                let k_choices = cuckoo_table.k_choices;
+
+                let num_total_buckets = cuckoo_table.num_total_buckets;
+                let slots_per_bucket = cuckoo_table.slots_per_bucket;
+                let bucket_selection_key = cuckoo_table.bucket_selection_key;
+                (table, local_hash_keys, table_size, mask, k_choices, num_total_buckets, slots_per_bucket, bucket_selection_key.to_vec())
             };
 
             let outbound_stream = async_stream::stream! {
@@ -242,8 +341,12 @@ impl PirService for MyPIRService {
                 let config_data_proto = ConfigData {
                     table_size: table_data.2 as u64,
                     mask: table_data.3 as u64,
-                    num_hashes: table_data.4 as u64,
-                    hash_keys: table_data.1,
+                    k_choices: table_data.4 as u64,
+                    local_hash_keys: table_data.1,
+                    bucket_selection_key: table_data.7,
+                    num_total_buckets:  table_data.5 as u64,
+                    slots_per_bucket: table_data.6 as u64,
+                    
                 };
 
                 let response = client.send_configuration(Request::new(config_data_proto)).await?;
@@ -268,11 +371,14 @@ impl PirService for MyPIRService {
         let mut cuckoo_table = self.cuckoo_table.lock().await;
         cuckoo_table.table_size = config_data_proto.table_size as usize;
         cuckoo_table.mask = config_data_proto.mask as usize;
-        cuckoo_table.num_hashes = config_data_proto.num_hashes as usize;
-        cuckoo_table.hash_keys = config_data_proto.hash_keys
+        cuckoo_table.k_choices = config_data_proto.k_choices as usize;
+        cuckoo_table.local_hash_keys = config_data_proto.local_hash_keys
             .into_iter()
             .map(|v| v.try_into().expect("Hash key must be 16 bytes"))
             .collect();
+        cuckoo_table.bucket_selection_key = config_data_proto.bucket_selection_key.try_into().unwrap();
+        cuckoo_table.num_total_buckets = config_data_proto.num_total_buckets as usize;
+        cuckoo_table.slots_per_bucket = config_data_proto.slots_per_bucket as usize;
 
         println!("TEST db[1] = {:?}", cuckoo_table.table[1]);
 
@@ -374,10 +480,20 @@ impl PirService for MyPIRService {
         let bucket_size = *self.bucket_size.lock().await as u32;
         let bucket_bits = *self.bucket_bits.lock().await;
         
+        // Get hash keys from Cuckoo table
+        let hash_keys = {
+            let cuckoo_table = self.cuckoo_table.lock().await;
+
+            (cuckoo_table.bucket_selection_key.to_vec(), cuckoo_table.local_hash_keys.iter().map(|key| key.to_vec()).collect())
+        };
+        
         Ok(Response::new(ClientSessionInitResponse {
             num_buckets,
             bucket_size,
             bucket_bits,
+            local_hash_keys: hash_keys.1,
+            bucket_selection_key: hash_keys.0,
+            entry_u64_count: ENTRY_U64_COUNT as u64,
         }))
     }
 }

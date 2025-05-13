@@ -2,17 +2,6 @@ syntax = "proto3";
 
 package ms_kpir;
 
-// Message representing the query sent by the client to a server.
-// It contains the DPF key, which the server uses to process the database.
-message Query {
-  bytes dpf_key = 1;  // The DPF key as a byte array
-}
-
-// Message representing the answer returned by the server to the client.
-// It contains the data computed by the server based on the DPF key.
-message Answer {
-  bytes data = 1;  // The server's response as a byte array
-}
 
 // Message for CSV row data
 message CsvRow {
@@ -43,6 +32,10 @@ message ClientSessionInitResponse {
   uint32 num_buckets = 1;
   uint32 bucket_size = 2;
   uint32 bucket_bits = 3;
+  repeated bytes local_hash_keys = 4; 
+  bytes bucket_selection_key = 5;
+  uint64 entry_u64_count = 6;
+
 }
 
 // Message for single entry update that includes the CSV row and server addresses
@@ -60,18 +53,53 @@ message ByteArrayEntry {
 message ConfigData {
   uint64 table_size = 1;
   uint64 mask = 2;
-  uint64 num_hashes = 3;
-  repeated bytes hash_keys = 4; // Each 'bytes' entry is expected to be 16 bytes long
+  uint64 k_choices = 3;
+  repeated bytes local_hash_keys = 4; // Each 'bytes' entry is expected to be 16 bytes long
+  bytes bucket_selection_key = 5;
+  uint64 num_total_buckets = 6;
+  uint64 slots_per_bucket = 7;
+
 }
 
+
+message DPFKey {
+  uint32 n = 1;
+
+  // Fixed-size byte arrays represented as bytes
+  bytes seed = 2; // length should be AES_BLOCK_SIZE (16 bytes)
+
+  repeated bytes cw_levels = 3; // Each element is AES_BLOCK_SIZE bytes
+
+  // CW_n is a tuple: ([u8; AES_BLOCK_SIZE - 1], u8, u8)
+  message CWN {
+    bytes hcw = 1; // AES_BLOCK_SIZE - 1 bytes
+    uint32 lcw0 = 2; // use uint32 for u8
+    uint32 lcw1 = 3;
+  }
+  CWN cw_n = 4;
+
+  int64 cw_np1 = 5; // CW_{n+1}
+}
+
+message BucketKeys {
+  string client_id = 1;
+  uint32 server_id = 2;
+  repeated DPFKey bucket_key = 3;
+}
+
+message BucketEvalResult {
+  repeated int64 value = 1;
+}
+
+message ServerResponse {
+  repeated BucketEvalResult bucket_result = 1;
+}
 
 
 
 // Service definition for the PIR server.
 // Each server in the multi-server setup implements this service.
 service PIRService {
-  // RPC method where the server receives a Query and returns an Answer.
-  rpc PirQuery(Query) returns (Answer);
   
   // Stream CSV data to server
   rpc StreamCsvData(stream CsvRow) returns (SyncResponse);
@@ -88,4 +116,8 @@ service PIRService {
   
   // Client session initialization
   rpc InitClientSession(ClientSessionInitRequest) returns (ClientSessionInitResponse);
+
+
+  // RPC method where the server receives a PIR Query and returns an Answer.
+  rpc PirQuery(BucketKeys) returns (ServerResponse);
 }
