@@ -45,6 +45,7 @@ pub struct MyPIRService {
     num_buckets: Arc<Mutex<usize>>,
     bucket_size: Arc<Mutex<usize>>,
     bucket_bits: Arc<Mutex<u32>>,
+    n_bits: Arc<Mutex<u32>>,
     client_sessions: Arc<Mutex<HashMap<String, ClientSession>>>,
 }
 
@@ -80,6 +81,7 @@ impl Default for MyPIRService {
             num_buckets: Arc::new(Mutex::new(calculated_num_buckets)),
             bucket_size: Arc::new(Mutex::new(calculated_bucket_size)),
             bucket_bits: Arc::new(Mutex::new(calculated_bucket_bits)),
+            n_bits: Arc::new(Mutex::new(n_bits)),
             client_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -299,6 +301,7 @@ impl PirService for MyPIRService {
     ) -> Result<Response<SyncResponse>, Status> {
         let server_sync = request.into_inner();
         let server_addresses = server_sync.server_addresses;
+        println!("Received Sync Server address");
 
         // Create a client for each server and send the CuckooHashTable details
         for server_addr in server_addresses {
@@ -306,47 +309,75 @@ impl PirService for MyPIRService {
                 .await
                 .map_err(|e| Status::internal(format!("Failed to connect to server {}: {}", server_addr, e)))?;
 
-            // Clone the table data we need before creating the stream
-            let table_data = {
+            // Extract configuration data without cloning the entire table
+            let config_data = {
                 let cuckoo_table = self.cuckoo_table.lock().await;
-                let table: Vec<_> = cuckoo_table.table.iter().map(|arr| arr.to_vec()).collect();
                 let local_hash_keys: Vec<Vec<u8>> = cuckoo_table.local_hash_keys.iter().map(|key| key.to_vec()).collect();
                 let table_size = cuckoo_table.table_size;
                 let mask = cuckoo_table.mask;
                 let k_choices = cuckoo_table.k_choices;
-
                 let num_total_buckets = cuckoo_table.num_total_buckets;
                 let slots_per_bucket = cuckoo_table.slots_per_bucket;
-                let bucket_selection_key = cuckoo_table.bucket_selection_key;
-                (table, local_hash_keys, table_size, mask, k_choices, num_total_buckets, slots_per_bucket, bucket_selection_key.to_vec())
+                let bucket_selection_key = cuckoo_table.bucket_selection_key.to_vec();
+                let table_len = cuckoo_table.table.len();
+                
+                (local_hash_keys, table_size, mask, k_choices, num_total_buckets, slots_per_bucket, bucket_selection_key, table_len)
             };
-
+            
+            // Clone the Arc to share with the stream
+            let table_arc = Arc::clone(&self.cuckoo_table);
+            
+            // Create a stream that processes entries in batches to avoid holding the lock too long
             let outbound_stream = async_stream::stream! {
-                for (i, byte_array) in table_data.0.iter().enumerate() {
-                    let chunk = ByteArrayEntry {
-                        index: i as u32,
-                        value: byte_array.clone(),
-                    };
-                    yield chunk;
+                const BATCH_SIZE: usize = 10000; // Process this many entries at once
+                let table_len = config_data.7;
+                let mut i = 0;
+                
+                while i < table_len {
+                    let end = std::cmp::min(i + BATCH_SIZE, table_len);
+                    let mut batch = Vec::with_capacity(end - i);
+                    
+                    // Only lock for the duration of copying this batch
+                    {
+                        let table_lock = table_arc.lock().await;
+                        for idx in i..end {
+                            batch.push(ByteArrayEntry {
+                                index: idx as u32,
+                                value: table_lock.table[idx].to_vec(),
+                            });
+                        }
+                    } // Lock is released here
+                    
+                    // Yield each entry in the batch without holding the lock
+                    for entry in batch {
+                        yield entry;
+                    }
+                    
+                    i = end;
+                    
+                    if i % 50000 == 0 {
+                        println!("Client: Prepared {} of {} chunks to send...", i, table_len);
+                    }
                 }
+                
                 println!("Client: Finished preparing all chunks to send.");
             };
 
             // Send table details to server
+            println!("Sending table data to sync server");
             let response = client.stream_byte_arrays(Request::new(outbound_stream)).await
                 .map_err(|e| Status::internal(format!("Failed to sync with server {}: {}", server_addr, e)))?;
 
             let response_inner = response.into_inner();
             if response_inner.success {
                 let config_data_proto = ConfigData {
-                    table_size: table_data.2 as u64,
-                    mask: table_data.3 as u64,
-                    k_choices: table_data.4 as u64,
-                    local_hash_keys: table_data.1,
-                    bucket_selection_key: table_data.7,
-                    num_total_buckets:  table_data.5 as u64,
-                    slots_per_bucket: table_data.6 as u64,
-                    
+                    table_size: config_data.1 as u64,
+                    mask: config_data.2 as u64,
+                    k_choices: config_data.3 as u64,
+                    local_hash_keys: config_data.0,
+                    bucket_selection_key: config_data.6,
+                    num_total_buckets: config_data.4 as u64,
+                    slots_per_bucket: config_data.5 as u64,
                 };
 
                 let response = client.send_configuration(Request::new(config_data_proto)).await?;
@@ -397,6 +428,7 @@ impl PirService for MyPIRService {
     ) -> Result<Response<SyncResponse>, Status> {
         let mut stream = request.into_inner();
         let mut line_count = 0;
+        println!("Received Stream from other server");
 
         let mut cuckoo_table = self.cuckoo_table.lock().await;
 
@@ -405,6 +437,12 @@ impl PirService for MyPIRService {
             let index = byte_array_entry.index;
             let value = byte_array_entry.value;
             cuckoo_table.table[index as usize] = value.try_into().expect("Failed to convert value");
+            if line_count % 50000 == 0 {
+                println!(
+                    "  Processed {} CSV records",
+                    line_count,
+                );
+            }
         }
 
         Ok(Response::new(SyncResponse {
@@ -479,6 +517,7 @@ impl PirService for MyPIRService {
         let num_buckets = *self.num_buckets.lock().await as u32;
         let bucket_size = *self.bucket_size.lock().await as u32;
         let bucket_bits = *self.bucket_bits.lock().await;
+        let n_bits = *self.n_bits.lock().await;
         
         // Get hash keys from Cuckoo table
         let hash_keys = {
@@ -491,6 +530,7 @@ impl PirService for MyPIRService {
             num_buckets,
             bucket_size,
             bucket_bits,
+            n_bits,
             local_hash_keys: hash_keys.1,
             bucket_selection_key: hash_keys.0,
             entry_u64_count: ENTRY_U64_COUNT as u64,

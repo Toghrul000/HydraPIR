@@ -1386,7 +1386,7 @@ pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
 }
 
 
-pub fn dpf_priv_update_eval_buckets<const ENTRY_U64_SIZE: usize>(
+pub fn dpf_priv_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
     server_id: usize,
     server_keys: &[DPFKey_Bytes<ENTRY_U64_SIZE>], 
     db: &mut[[i64; ENTRY_U64_SIZE]],
