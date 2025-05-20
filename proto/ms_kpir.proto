@@ -62,6 +62,11 @@ message ConfigData {
 
 }
 
+message CuckooKeys {
+  repeated bytes local_hash_keys = 1; // Each 'bytes' entry is expected to be 16 bytes long
+  bytes bucket_selection_key = 2;
+}
+
 
 message DPFKey {
   uint32 n = 1;
@@ -134,6 +139,10 @@ message ByteShareArrayEntry {
   repeated int64 value = 2;  // The u64 vabyte array itself
 }
 
+// Message for client cleanup request
+message ClientCleanupRequest {
+  string client_id = 1;
+}
 
 // Service definition for the PIR server.
 // Each server in the multi-server setup implements this service.
@@ -145,9 +154,11 @@ service PIRService {
   // Send server addresses to first server
   rpc SendServerAddresses(ServerSync) returns (SyncResponse);
 
-  // Services to send whole cuckoo table to other servers
+  // Services to send whole cuckoo table details to other servers
   rpc StreamByteArrays(stream ByteArrayEntry) returns (SyncResponse);
   rpc SendConfiguration(ConfigData) returns (SyncResponse);
+
+  rpc SendCuckooKeys(CuckooKeys) returns (SyncResponse);
 
   // Update a single entry in the Cuckoo hash table
   rpc UpdateSingleEntry(UpdateSingleEntryRequest) returns (SyncResponse);
@@ -158,6 +169,10 @@ service PIRService {
 
   // RPC method where the server receives a PIR Query and returns an Answer.
   rpc PirQuery(BucketKeys) returns (ServerResponse);
+
+  // Cleanup client session
+  rpc CleanupClientSession(ClientCleanupRequest) returns (SyncResponse);
+
 
 }
 
@@ -176,9 +191,12 @@ service PIRServicePrivateUpdate {
   // RPC method where the server receives a PIR Query and returns an Answer.
   rpc PirQuery(BucketKeys) returns (ServerResponse);
 
-
+  // Services to send whole cuckoo table details to other servers
   rpc StreamByteShareArrays(stream ByteShareArrayEntry) returns (SyncResponse);
   rpc SendConfiguration(ConfigData) returns (SyncResponse);
 
   rpc PrivateUpdate(PrivUpdateRequest) returns (SyncResponse);
+
+  // Cleanup client session
+  rpc CleanupClientSession(ClientCleanupRequest) returns (SyncResponse);
 }

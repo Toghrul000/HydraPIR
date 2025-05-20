@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
                 server_admin::update_servers(key, value, &server_addrs).await?;
             } else {
-                server_admin::run_admin_client("dummy_data.csv", &server_addrs).await?;
+                server_admin::run_admin_client("./data/dummy_data.csv", &server_addrs).await?;
             }
         }
         _ => {

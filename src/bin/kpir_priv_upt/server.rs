@@ -16,7 +16,7 @@ use crate::ms_kpir::PrivUpdateRequest;
 use crate::ms_kpir::{
     CsvRow, ServerSync, SyncResponse, ByteShareArrayEntry, ConfigData,
     ClientSessionInitRequest, ClientSessionInitResponse,
-    BucketKeys, ServerResponse, BucketEvalResult,
+    BucketKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest,
     pir_service_private_update_server::PirServicePrivateUpdate,
     pir_service_private_update_client::PirServicePrivateUpdateClient,
 };
@@ -34,12 +34,19 @@ fn create_aes(key: &[u8; 16]) -> Aes128 {
     Aes128::new(&aes_key)
 }
 
-// --- Server Configuration ---
-const STORAGE_MB: u64 = 256;
-const TOTAL_STORAGE_BYTES: u64 = STORAGE_MB * 1024 * 1024;
-const DESIRED_ENTRY_SIZE_BYTES: usize = 256;
-const ENTRY_U64_COUNT: usize = DESIRED_ENTRY_SIZE_BYTES / 8;
-const MAX_REHASH_ATTEMPTS_PER_CONFIG: usize = 1;
+// Import constants from config module
+use kpir::config::{
+    TOTAL_STORAGE_BYTES,
+    DESIRED_ENTRY_SIZE_BYTES,
+    ENTRY_U64_COUNT,
+    MAX_REHASH_ATTEMPTS_PER_CONFIG,
+};
+
+// const STORAGE_MB: u64 = 256;
+// const TOTAL_STORAGE_BYTES: u64 = STORAGE_MB * 1024 * 1024;
+// const DESIRED_ENTRY_SIZE_BYTES: usize = 256;
+// const ENTRY_U64_COUNT: usize = DESIRED_ENTRY_SIZE_BYTES / 8;
+// const MAX_REHASH_ATTEMPTS_PER_CONFIG: usize = 1;
 
 #[derive(Debug)]
 pub struct MyPIRService {
@@ -695,109 +702,6 @@ impl PirServicePrivateUpdate for MyPIRService {
     }
 
 
-    // async fn send_server_addresses(
-    //     &self,
-    //     request: Request<ServerSync>,
-    // ) -> Result<Response<SyncResponse>, Status> {
-    //     let server_sync = request.into_inner();
-    //     let server_addresses = server_sync.server_addresses;
-    //     println!("Received Sync Server address");
-
-
-    //     // Create a client for each server and send the CuckooHashTable details
-    //     for server_addr in server_addresses {
-    //         let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", server_addr))
-    //             .await
-    //             .map_err(|e| Status::internal(format!("Failed to connect to server {}: {}", server_addr, e)))?;
-
-    //         // Extract configuration data without cloning the entire table
-    //         let config_data = {
-    //             let cuckoo_table = self.cuckoo_table.lock().await;
-    //             let local_hash_keys: Vec<Vec<u8>> = cuckoo_table.local_hash_keys.iter().map(|key| key.to_vec()).collect();
-    //             let table_size = cuckoo_table.table_size;
-    //             let mask = cuckoo_table.mask;
-    //             let k_choices = cuckoo_table.k_choices;
-    //             let num_total_buckets = cuckoo_table.num_total_buckets;
-    //             let slots_per_bucket = cuckoo_table.slots_per_bucket;
-    //             let bucket_selection_key = cuckoo_table.bucket_selection_key.to_vec();
-    //             let table_len = cuckoo_table.table.len();
-                
-    //             (local_hash_keys, table_size, mask, k_choices, num_total_buckets, slots_per_bucket, bucket_selection_key, table_len)
-    //         };
-            
-    //         // Clone the Arc to share with the stream
-    //         let table_arc = Arc::clone(&self.cuckoo_table);
-            
-    //         // Create a stream that processes entries in batches to avoid holding the lock too long
-    //         let outbound_stream = async_stream::stream! {
-    //             const BATCH_SIZE: usize = 10000; // Process this many entries at once
-    //             let table_len = config_data.7;
-    //             let mut i = 0;
-                
-    //             while i < table_len {
-    //                 let end = std::cmp::min(i + BATCH_SIZE, table_len);
-    //                 let mut batch = Vec::with_capacity(end - i);
-                    
-    //                 // Only lock for the duration of copying this batch
-    //                 {
-    //                     let mut table_lock = table_arc.lock().await;
-    //                     for idx in i..end {
-    //                         let entry = table_lock.table[idx].to_vec();
-
-    //                         let (share1, share2) = create_additive_shares::<ENTRY_U64_COUNT>(&entry);
-                            
-    //                         batch.push(ByteShareArrayEntry {
-    //                             index: idx as u32,
-    //                             value: share2.to_vec(),
-    //                         });
-    //                         table_lock.table[idx] = share1;
-    //                     }
-    //                 } // Lock is released here
-                    
-    //                 // Yield each entry in the batch without holding the lock
-    //                 for entry in batch {
-    //                     yield entry;
-    //                 }
-                    
-    //                 i = end;
-                    
-    //                 if i % 50000 == 0 {
-    //                     println!("Client: Prepared {} of {} chunks to send...", i, table_len);
-    //                 }
-    //             }
-                
-    //             println!("Client: Finished preparing all chunks to send.");
-    //         };
-
-    //         // Send table details to server
-    //         println!("Sending table data to sync server");
-    //         let response = client.stream_byte_share_arrays(Request::new(outbound_stream)).await
-    //             .map_err(|e| Status::internal(format!("Failed to sync with server {}: {}", server_addr, e)))?;
-
-    //         let response_inner = response.into_inner();
-    //         if response_inner.success {
-    //             let config_data_proto = ConfigData {
-    //                 table_size: config_data.1 as u64,
-    //                 mask: config_data.2 as u64,
-    //                 k_choices: config_data.3 as u64,
-    //                 local_hash_keys: config_data.0.clone(),
-    //                 bucket_selection_key: config_data.6.clone(),
-    //                 num_total_buckets: config_data.4 as u64,
-    //                 slots_per_bucket: config_data.5 as u64,
-    //             };
-
-    //             let response = client.send_configuration(Request::new(config_data_proto)).await?;
-    //             println!("Server acknowledgement: {:?}", response.into_inner());
-    //         }
-    //     }
-
-    //     Ok(Response::new(SyncResponse {
-    //         success: true,
-    //         message: "Successfully synchronized with all servers".to_string(),
-    //     }))
-    // }
-
-
     async fn send_configuration(
         &self,
         request: Request<ConfigData>,
@@ -905,5 +809,33 @@ impl PirServicePrivateUpdate for MyPIRService {
             bucket_selection_key: hash_keys.0,
             entry_u64_count: ENTRY_U64_COUNT as u64,
         }))
+    }
+
+
+
+    async fn cleanup_client_session(
+        &self,
+        request: Request<ClientCleanupRequest>,
+    ) -> Result<Response<SyncResponse>, Status> {
+        let cleanup_request = request.into_inner();
+        let client_id = cleanup_request.client_id;
+        
+        let mut sessions = self.client_sessions.lock().await;
+        match sessions.remove(&client_id) {
+            Some(_) => {
+                println!("Successfully removed client session: {}", client_id);
+                Ok(Response::new(SyncResponse {
+                    success: true,
+                    message: format!("Successfully removed client session: {}", client_id),
+                }))
+            },
+            None => {
+                println!("Client session not found: {}", client_id);
+                Ok(Response::new(SyncResponse {
+                    success: false,
+                    message: format!("Client session not found: {}", client_id),
+                }))
+            }
+        }
     }
 }

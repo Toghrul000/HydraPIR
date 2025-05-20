@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Connect to two servers running on ports
             let server_addrs = ["127.0.0.1:50051", "127.0.0.1:50052", "127.0.0.1:50053", "127.0.0.1:50054"];
             let server_addrs: Vec<String> = server_addrs.iter().map(|&s| s.to_string()).collect();
-            server_admin::run_admin_client("dummy_data.csv", &server_addrs).await?;
+            server_admin::run_admin_client("./data/dummy_data.csv", &server_addrs).await?;
             
         }
         _ => {

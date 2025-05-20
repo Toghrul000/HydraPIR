@@ -1,2 +1,3 @@
 /target
-dummy_data.csv
+/data/*.csv
+.env

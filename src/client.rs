@@ -1,5 +1,5 @@
 use crate::ms_kpir::pir_service_client::PirServiceClient;
-use crate::ms_kpir::{ClientSessionInitRequest, BucketKeys, DpfKey};
+use crate::ms_kpir::{ClientSessionInitRequest, BucketKeys, DpfKey, CuckooKeys};
 use crate::ms_kpir::dpf_key;
 use cuckoo_lib::get_hierarchical_indices;
 use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers};
@@ -12,8 +12,8 @@ use std::io::{self, Write};
 use aes::Aes128;
 use aes::cipher::{KeyInit, generic_array::GenericArray};
 
-// Define entry size constant - must match server's ENTRY_U64_COUNT
-const ENTRY_U64_COUNT: usize = 32; // 32 u64s = 256 bytes
+use kpir::config::ENTRY_U64_COUNT;
+// const ENTRY_U64_COUNT: usize = 32; // 32 u64s = 256 bytes
 
 #[derive(Clone)]
 pub struct ClientSession {
@@ -56,7 +56,9 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     };
     
     // Send session init request to each server
-    for &addr in server_addrs {
+    let mut first_server_keys: Option<(Vec<Vec<u8>>, Vec<u8>)> = None;
+    
+    for (i, &addr) in server_addrs.iter().enumerate() {
         let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
         
         let init_request = ClientSessionInitRequest {
@@ -74,14 +76,52 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
             session.bucket_size = response_inner.bucket_size;
             session.bucket_bits = response_inner.bucket_bits;
             session.local_hash_keys = response_inner.local_hash_keys.iter()
-            .map(|k| {
-                let slice: &[u8] = k.as_slice();
-                let array: [u8; 16] = slice.try_into().expect("Expected a 16-byte key");
-                array
-            })
-            .collect();
+                .map(|k| {
+                    let slice: &[u8] = k.as_slice();
+                    let array: [u8; 16] = slice.try_into().expect("Expected a 16-byte key");
+                    array
+                })
+                .collect();
+            // Store the first server's keys to send to other servers
+            first_server_keys = Some((
+                response_inner.local_hash_keys.clone(),
+                response_inner.bucket_selection_key.clone()
+            ));
+            // Now use the cloned value for the session
             session.bucket_selection_key = response_inner.bucket_selection_key.try_into().unwrap();
             session.entry_u64_count = response_inner.entry_u64_count as usize;
+        } else if i > 0 {
+            // For subsequent servers, check if their keys are different from first server's keys
+            if let Some((first_local_hash_keys, first_bucket_selection_key)) = &first_server_keys {
+                // Check if either the local hash keys or bucket selection key is different
+                let keys_are_different = 
+                    // Check if lengths are different
+                    response_inner.local_hash_keys.len() != first_local_hash_keys.len() ||
+                    // Check if bucket selection key is different
+                    response_inner.bucket_selection_key != *first_bucket_selection_key ||
+                    // Check if any local hash key is different
+                    response_inner.local_hash_keys.iter()
+                        .zip(first_local_hash_keys.iter())
+                        .any(|(a, b)| a != b);
+
+                if keys_are_different {
+                    println!("Server at {} has different keys than first server, updating...", addr);
+                    let cuckoo_keys = CuckooKeys {
+                        local_hash_keys: first_local_hash_keys.clone(),
+                        bucket_selection_key: first_bucket_selection_key.clone(),
+                    };
+                    
+                    let response = client.send_cuckoo_keys(tonic::Request::new(cuckoo_keys)).await?;
+                    let response_inner = response.into_inner();
+                    if !response_inner.success {
+                        println!("Warning: Failed to sync Cuckoo keys with server at {}", addr);
+                    } else {
+                        println!("Successfully synced Cuckoo keys with server at {}", addr);
+                    }
+                } else {
+                    println!("Server at {} already has the same keys as first server, skipping update", addr);
+                }
+            }
         }
         
         println!("Initialized session with server at {}", addr);
@@ -93,8 +133,6 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     
     Ok(session)
 }
-
-
 
 async fn execute_pir_query_and_display_results(
     session: &ClientSession,
@@ -120,46 +158,44 @@ async fn execute_pir_query_and_display_results(
     
     let mut server_futures = Vec::new();
 
-    for (group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
-        for (_, &addr) in addr_chunk.iter().enumerate() {
-            let client_keys_for_group = &client_keys[group_index];
-            let client_future = async move {
-                let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
-                
-                // Use group_index to index client_keys
-                let proto_bucket_keys = client_keys_for_group.clone().iter().map(|key| {
-                    let cwn = dpf_key::Cwn {
-                        hcw: key.cw_n.0.to_vec(),
-                        lcw0: key.cw_n.1 as u32,
-                        lcw1: key.cw_n.2 as u32,
-                    };
-        
-                    DpfKey {
-                        n: key.n as u32,
-                        seed: key.seed.to_vec(),
-                        cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
-                        cw_n: Some(cwn),
-                        cw_np1: key.cw_np1,
-                    }
-                }).collect();
-        
-                let request = tonic::Request::new(BucketKeys {
-                    client_id: session.client_id.clone(),
-                    server_id: group_index as u32,
-                    bucket_key: proto_bucket_keys,
-                });
-        
-                let response = client.pir_query(request).await?;
-                Ok::<_, Box<dyn Error>>(response.into_inner())
-            };
-            server_futures.push(client_future);
-        }
-    }
+    for (i, &addr) in server_addrs.iter().enumerate() {
+        let client_keys_for_server = &client_keys[i];
+        let client_future = async move {
 
-    // // Wait for all server responses in parallel
-    // let answers = join_all(server_futures).await
-    //     .into_iter()
-    //     .collect::<Result<Vec<_>, _>>()?;
+            let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+            
+            // Convert Rust DPFKey to protobuf DPFKey
+            let proto_bucket_keys = client_keys_for_server.clone().iter().map(|key| {
+                // Try with just the struct name, let Rust use the import correctly
+                let cwn = dpf_key::Cwn {
+                    hcw: key.cw_n.0.to_vec(),
+                    lcw0: key.cw_n.1 as u32,
+                    lcw1: key.cw_n.2 as u32,
+                };
+                
+                // Create the DPFKey
+                DpfKey {
+                    n: key.n as u32,
+                    seed: key.seed.to_vec(),
+                    cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
+                    cw_n: Some(cwn),
+                    cw_np1: key.cw_np1,
+                }
+            }).collect();
+
+            // Create BucketKeys request
+            let request = tonic::Request::new(BucketKeys {
+                client_id: session.client_id.clone(),
+                server_id: i as u32,
+                bucket_key: proto_bucket_keys,
+            });
+
+            let response = client.pir_query(request).await?;
+            Ok::<_, Box<dyn Error>>(response.into_inner())
+
+        };
+        server_futures.push(client_future);
+    }
 
     // Sequentially wait
     let mut answers = Vec::new();
@@ -233,6 +269,33 @@ fn create_aes(key: &[u8; 16]) -> Aes128 {
     Aes128::new(&aes_key)
 }
 
+async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Cleaning up client session...");
+    
+    for &addr in server_addrs {
+        let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+        
+        let cleanup_request = crate::ms_kpir::ClientCleanupRequest {
+            client_id: session.client_id.clone(),
+        };
+        
+        match client.cleanup_client_session(tonic::Request::new(cleanup_request)).await {
+            Ok(response) => {
+                let response_inner = response.into_inner();
+                if response_inner.success {
+                    println!("Successfully cleaned up session on server {}", addr);
+                } else {
+                    eprintln!("Failed to cleanup session on server {}: {}", addr, response_inner.message);
+                }
+            },
+            Err(e) => eprintln!("Error cleaning up session on server {}: {}", addr, e),
+        }
+    }
+    
+    println!("Client session cleanup completed");
+    Ok(())
+}
+
 pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize client session
     let session = initialize_session(server_addrs).await?;
@@ -240,9 +303,8 @@ pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error:
     loop {
         println!("\nChoose operation:");
         println!("1. PIR Query");
-        println!("2. Private Update");
-        println!("3. Exit");
-        print!("Enter choice (1-3): ");
+        println!("2. Exit");
+        print!("Enter choice (1,2): ");
         io::stdout().flush().unwrap();
 
         let mut choice = String::new();
@@ -271,10 +333,14 @@ pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error:
                 }
             },
             "2" => {
+                println!("Cleaning up client session before exit...");
+                if let Err(e) = cleanup_client_session(&session, server_addrs).await {
+                    eprintln!("Error during cleanup: {}", e);
+                }
                 println!("Exiting client...");
                 break;
             },
-            _ => println!("Invalid choice. Please enter 1, 2, or 3."),
+            _ => println!("Invalid choice. Please enter 1 or 2."),
         }
     }
 

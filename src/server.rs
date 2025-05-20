@@ -16,8 +16,22 @@ use crate::ms_kpir::{
     UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse,
     pir_service_server::PirService,
     pir_service_client::PirServiceClient,
-    BucketKeys, ServerResponse, BucketEvalResult
+    BucketKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest, CuckooKeys
 };
+
+// Import constants from config module
+use kpir::config::{
+    TOTAL_STORAGE_BYTES,
+    DESIRED_ENTRY_SIZE_BYTES,
+    ENTRY_U64_COUNT,
+    MAX_REHASH_ATTEMPTS_PER_CONFIG,
+};
+
+// const STORAGE_MB: u64 = 256;
+// const TOTAL_STORAGE_BYTES: u64 = STORAGE_MB * 1024 * 1024;
+// const DESIRED_ENTRY_SIZE_BYTES: usize = 256;
+// const ENTRY_U64_COUNT: usize = DESIRED_ENTRY_SIZE_BYTES / 8;
+// const MAX_REHASH_ATTEMPTS_PER_CONFIG: usize = 1;
 
 // Client session data
 #[derive(Debug, Clone)]
@@ -32,16 +46,9 @@ fn create_aes(key: &[u8; 16]) -> Aes128 {
     Aes128::new(&aes_key)
 }
 
-// --- Server Configuration ---
-const STORAGE_MB: u64 = 256;
-const TOTAL_STORAGE_BYTES: u64 = STORAGE_MB * 1024 * 1024;
-const DESIRED_ENTRY_SIZE_BYTES: usize = 256;
-const ENTRY_U64_COUNT: usize = DESIRED_ENTRY_SIZE_BYTES / 8;
-const MAX_REHASH_ATTEMPTS_PER_CONFIG: usize = 1;
-
 #[derive(Debug)]
 pub struct MyPIRService {
-    cuckoo_table: Arc<Mutex<CuckooHashTableBucketed<ENTRY_U64_COUNT>>>,
+    cuckoo_table: Arc<Mutex<CuckooHashTableBucketed<{ ENTRY_U64_COUNT }>>>,
     num_buckets: Arc<Mutex<usize>>,
     bucket_size: Arc<Mutex<usize>>,
     bucket_bits: Arc<Mutex<u32>>,
@@ -73,7 +80,7 @@ impl Default for MyPIRService {
         println!("Calculated BUCKET_BITS: {}", calculated_bucket_bits);
         println!("---------------------------------");
 
-        let cuckoo_table = CuckooHashTableBucketed::<ENTRY_U64_COUNT>::new(calculated_num_buckets, calculated_bucket_size)
+        let cuckoo_table = CuckooHashTableBucketed::<{ ENTRY_U64_COUNT }>::new(calculated_num_buckets, calculated_bucket_size)
         .expect("Failed to create CuckooHashTable");
 
         Self {
@@ -163,7 +170,7 @@ impl PirService for MyPIRService {
         
         
         // Evaluate the query
-        let results = dmpf_pir_query_eval::<ENTRY_U64_COUNT>(
+        let results = dmpf_pir_query_eval::<{ ENTRY_U64_COUNT }>(
             server_id,
             &dpf_keys,
             &table,
@@ -476,7 +483,7 @@ impl PirService for MyPIRService {
         
         let mut cuckoo_table = self.cuckoo_table.lock().await;
         
-        match cuckoo_table.insert_tracked(key.clone(), value, Some(&seed)) {
+        match cuckoo_table.insert_tracked_update_checked(key.clone(), value, Some(&seed)) {
             Ok(_) => {
                 println!("Successfully inserted key '{}'", key);
 
@@ -534,6 +541,57 @@ impl PirService for MyPIRService {
             local_hash_keys: hash_keys.1,
             bucket_selection_key: hash_keys.0,
             entry_u64_count: ENTRY_U64_COUNT as u64,
+        }))
+    }
+
+    async fn cleanup_client_session(
+        &self,
+        request: Request<ClientCleanupRequest>,
+    ) -> Result<Response<SyncResponse>, Status> {
+        let cleanup_request = request.into_inner();
+        let client_id = cleanup_request.client_id;
+        
+        let mut sessions = self.client_sessions.lock().await;
+        match sessions.remove(&client_id) {
+            Some(_) => {
+                println!("Successfully removed client session: {}", client_id);
+                Ok(Response::new(SyncResponse {
+                    success: true,
+                    message: format!("Successfully removed client session: {}", client_id),
+                }))
+            },
+            None => {
+                println!("Client session not found: {}", client_id);
+                Ok(Response::new(SyncResponse {
+                    success: false,
+                    message: format!("Client session not found: {}", client_id),
+                }))
+            }
+        }
+    }
+
+    async fn send_cuckoo_keys(
+        &self,
+        request: Request<CuckooKeys>,
+    ) -> Result<Response<SyncResponse>, Status> {
+        let cuckoo_keys = request.into_inner();
+        println!("Received Cuckoo keys from client");
+
+        let mut cuckoo_table = self.cuckoo_table.lock().await;
+        
+        // Convert the received keys to the expected format
+        cuckoo_table.local_hash_keys = cuckoo_keys.local_hash_keys
+            .into_iter()
+            .map(|v| v.try_into().expect("Hash key must be 16 bytes"))
+            .collect();
+        cuckoo_table.bucket_selection_key = cuckoo_keys.bucket_selection_key.try_into().unwrap();
+
+        println!("Successfully updated Cuckoo table keys");
+        println!("Number of local hash keys: {}", cuckoo_table.local_hash_keys.len());
+
+        Ok(Response::new(SyncResponse {
+            success: true,
+            message: "Successfully updated Cuckoo table keys".to_string(),
         }))
     }
 }

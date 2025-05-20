@@ -1151,6 +1151,152 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
         let mut current_entry_data = encode_entry::<N>(&key, &value)?;
         let mut current_key = key.clone();
 
+        
+        // // First check if key already exists and update it if found
+        // let potential_indices = self.get_hierarchical_indices(&current_key);
+        // for &index in &potential_indices {
+        //     if index >= self.table_size { continue; } // Safety check
+        //     if self.table[index] != EMPTY_SLOT_N {
+        //         match decode_entry(&self.table[index])? {
+        //             Some((stored_key, _)) => {
+        //                 if stored_key == key {
+        //                     // Found existing entry with same key, update it
+        //                     self.table[index] = current_entry_data;
+        //                     return Ok(());
+        //                 }
+        //             }
+        //             None => continue,
+        //         }
+        //     }
+        // }
+
+
+
+        let mut displacement_path: Vec<(usize, Entry<N>)> = Vec::new();
+        let mut visited: Option<HashSet<(String, usize)>> = None; // Tracks (key, global_index_tried)
+        let mut intended_path_for_visited_init: Vec<(String, usize)> = Vec::new(); // For initializing visited
+
+        for displacement_count in 0..MAX_TRACKED_DISPLACEMENTS {
+            let potential_indices = self.get_hierarchical_indices(&current_key);
+
+            // Check for empty slot among hierarchical choices
+            for &index in &potential_indices {
+                if index >= self.table_size { continue; } // Safety check
+                if self.table[index] == EMPTY_SLOT_N {
+                    // displacement_path.push((index, self.table[index])); // Log empty
+                    self.table[index] = current_entry_data;
+                    return Ok(());
+                }
+            }
+
+            // determine eviction target from hierarchical choices
+            let choice_idx_to_evict: usize;
+            if let Some(seed) = deterministic_eviction_seed {
+                // Deterministic eviction choice
+                let mut hasher = SipHasher24::new_with_key(seed);
+                current_key.hash(&mut hasher); // Hash current key
+                displacement_count.hash(&mut hasher); // Hash displacement count for variance
+                choice_idx_to_evict = hasher.finish() as usize % potential_indices.len();
+
+
+            } else {
+                choice_idx_to_evict = {
+                    let mut rng = self.rng.lock().unwrap();
+                    rng.random_range(0..potential_indices.len())
+                }
+                
+            }
+
+
+
+            let evict_global_index = potential_indices[choice_idx_to_evict];
+
+            // This check should ideally be redundant if get_hierarchical_indices is correct
+            if evict_global_index >= self.table_size {
+                 self.revert_changes(&displacement_path);
+                 return Err(CuckooError::InsertionFailed(format!(
+                    "Internal error: Hierarchical eviction index {} out of bounds for key '{}'",
+                    evict_global_index, current_key
+                 )));
+            }
+
+            let target_key_index_pair = (current_key.clone(), evict_global_index);
+            intended_path_for_visited_init.push(target_key_index_pair.clone());
+
+            // Cycle Detection Logic
+            if displacement_count >= MAX_DISPLACEMENTS {
+                if visited.is_none() {
+                    let mut initial_visited = HashSet::with_capacity(intended_path_for_visited_init.len());
+                    for item in &intended_path_for_visited_init { initial_visited.insert(item.clone()); }
+                    visited = Some(initial_visited);
+                }
+                if let Some(ref mut visited_set) = visited {
+                    if visited_set.contains(&target_key_index_pair) {
+                        self.revert_changes(&displacement_path);
+                        return Err(CuckooError::InsertionFailed(format!(
+                            "Cycle detected for key '{}' at hierarchical index {}", current_key, evict_global_index
+                        )));
+                    }
+                    visited_set.insert(target_key_index_pair);
+                }
+            }
+
+            // Displace
+            let displaced_entry_data = self.table[evict_global_index];
+            displacement_path.push((evict_global_index, displaced_entry_data));
+            self.table[evict_global_index] = current_entry_data;
+
+            current_entry_data = displaced_entry_data;
+            match decode_entry(&current_entry_data)? {
+                 Some((displaced_key, _)) => current_key = displaced_key,
+                 None => {
+                    self.revert_changes(&displacement_path);
+                    return Err(CuckooError::InsertionFailed(
+                        "Displaced an entry that unexpectedly decoded as empty".to_string()
+                    ));
+                 }
+            }
+        }
+
+        self.revert_changes(&displacement_path);
+        Err(CuckooError::InsertionFailed(format!(
+            "Max tracked displacements ({}) reached for key '{}'", MAX_TRACKED_DISPLACEMENTS, current_key
+        )))
+    }
+
+
+    /// Inserts a key-value pair (both Strings) using hybrid cycle detection. But this version also first checks if key already exists, if yes updates it
+    pub fn insert_tracked_update_checked(
+        &mut self,
+        key: String,
+        value: String,
+        deterministic_eviction_seed: Option<&[u8; 16]>,
+    ) -> Result<(), CuckooError> {
+        let EMPTY_SLOT_N: Entry<N> = [0u64; N];
+        let mut current_entry_data = encode_entry::<N>(&key, &value)?;
+        let mut current_key = key.clone();
+
+        
+        // // First check if key already exists and update it if found
+        let potential_indices = self.get_hierarchical_indices(&current_key);
+        for &index in &potential_indices {
+            if index >= self.table_size { continue; } // Safety check
+            if self.table[index] != EMPTY_SLOT_N {
+                match decode_entry(&self.table[index])? {
+                    Some((stored_key, _)) => {
+                        if stored_key == key {
+                            // Found existing entry with same key, update it
+                            self.table[index] = current_entry_data;
+                            return Ok(());
+                        }
+                    }
+                    None => continue,
+                }
+            }
+        }
+
+
+
         let mut displacement_path: Vec<(usize, Entry<N>)> = Vec::new();
         let mut visited: Option<HashSet<(String, usize)>> = None; // Tracks (key, global_index_tried)
         let mut intended_path_for_visited_init: Vec<(String, usize)> = Vec::new(); // For initializing visited
@@ -2094,39 +2240,39 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
 pub fn calculate_required_table_size(
     total_storage_bytes: u64,
     entry_size_bytes: usize,
-) -> (usize, u32) { // Return type is now a tuple
+) -> (usize, u32) {
     if entry_size_bytes == 0 {
         eprintln!("Error: entry_size_bytes cannot be 0.");
-        return (0, 0); // Cannot calculate size or n
+        return (0, 0);
     }
     // Ensure entry_size_bytes is reasonable (e.g., >= 8 for u64 alignment)
     if entry_size_bytes < 8 || entry_size_bytes % 8 != 0 {
         eprintln!(
-            "Warning: calculate_required_table_size_and_n called with \
+            "Warning: calculate_required_table_size called with \
              entry_size_bytes {} not multiple of 8. Result might be suboptimal.",
             entry_size_bytes
         );
-        // Proceed anyway, but the user should align ENTRY_SIZE in main
     }
 
-    // Calculate the minimum number of entries needed (ceiling division)
-    let num_entries_required =
-        (total_storage_bytes + entry_size_bytes as u64 - 1) / entry_size_bytes as u64;
+    // Calculate the maximum number of entries that *can* fit
+    let max_entries_possible = total_storage_bytes / entry_size_bytes as u64;
 
-    // Handle edge case where 0 bytes are requested or result is 0 entries
-    if num_entries_required == 0 {
-        // The smallest power-of-2 table size is 1 (2^0)
-        (1, 0)
-    } else {
-        // Find the next power of 2 >= num_entries_required
-        let table_size = num_entries_required.next_power_of_two() as usize;
-
-        // For a power of 2 (like table_size here), the number of trailing zeros
-        // in its binary representation gives the exponent n.
-        let n = table_size.trailing_zeros(); // trailing_zeros returns u32
-
-        (table_size, n)
+    // If no entries can fit, the smallest valid power of 2 size is 1 (2^0)
+    if max_entries_possible == 0 {
+        return (1, 0);
     }
+
+    // Find the largest power of 2 that is less than or equal to max_entries_possible.
+    // This represents the largest 2^n domain that can fit within the storage.
+    let table_size = {
+        // Find the most significant bit (MSB).
+        // If max_entries_possible is a power of 2, this is the table size.
+        // If not, we want the power of 2 below it.
+        let msb_pos = 63 - max_entries_possible.leading_zeros();
+        1u64 << msb_pos
+    };
+
+    let n = table_size.trailing_zeros();
+
+    (table_size as usize, n)
 }
-
-

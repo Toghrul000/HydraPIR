@@ -14,8 +14,9 @@ use std::io::{self, Write};
 use aes::Aes128;
 use aes::cipher::{KeyInit, generic_array::GenericArray};
 
-// Define entry size constant - must match server's ENTRY_U64_COUNT
-const ENTRY_U64_COUNT: usize = 32; // 32 u64s = 256 bytes
+
+use kpir::config::ENTRY_U64_COUNT;
+// const ENTRY_U64_COUNT: usize = 32; // 32 u64s = 256 bytes
 
 #[derive(Clone)]
 pub struct ClientSession {
@@ -329,6 +330,34 @@ async fn execute_private_update(
     Ok(())
 }
 
+
+async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Cleaning up client session...");
+    
+    for &addr in server_addrs {
+        let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
+        
+        let cleanup_request = crate::ms_kpir::ClientCleanupRequest {
+            client_id: session.client_id.clone(),
+        };
+        
+        match client.cleanup_client_session(tonic::Request::new(cleanup_request)).await {
+            Ok(response) => {
+                let response_inner = response.into_inner();
+                if response_inner.success {
+                    println!("Successfully cleaned up session on server {}", addr);
+                } else {
+                    eprintln!("Failed to cleanup session on server {}: {}", addr, response_inner.message);
+                }
+            },
+            Err(e) => eprintln!("Error cleaning up session on server {}: {}", addr, e),
+        }
+    }
+    
+    println!("Client session cleanup completed");
+    Ok(())
+}
+
 pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize client session
     let session = initialize_session(server_addrs).await?;
@@ -400,6 +429,10 @@ pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error:
                 }
             },
             "3" => {
+                println!("Cleaning up client session before exit...");
+                if let Err(e) = cleanup_client_session(&session, server_addrs).await {
+                    eprintln!("Error during cleanup: {}", e);
+                }
                 println!("Exiting client...");
                 break;
             },

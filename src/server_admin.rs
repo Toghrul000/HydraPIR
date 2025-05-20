@@ -111,6 +111,7 @@ pub async fn update_servers(
     }
 
     // Connect to first server
+    let seed: [u8; 16] = rand::rng().random();
     for server_addr in server_addresses{
         let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
@@ -122,7 +123,6 @@ pub async fn update_servers(
         };
         
         // Create the UpdateSingleEntryRequest
-        let seed: [u8; 16] = rand::rng().random();
         let update_request = UpdateSingleEntryRequest {
             csv_row: Some(csv_row),
             deterministic_eviction_seed: seed.to_vec(),
