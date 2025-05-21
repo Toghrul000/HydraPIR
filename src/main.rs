@@ -1,5 +1,5 @@
-use std::env;
 use tonic::transport::Server;
+use clap::{Parser, Subcommand};
 mod client;
 mod server;
 mod server_admin;
@@ -8,6 +8,58 @@ use crate::ms_kpir::pir_service_server::PirServiceServer;
 
 pub mod ms_kpir {
     tonic::include_proto!("ms_kpir");
+}
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start a server instance
+    Server {
+        /// Server address (e.g., 127.0.0.1:50051)
+        addr: String,
+    },
+    /// Run the client
+    Client {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+    },
+    /// Run the admin client
+    Admin {
+        #[command(subcommand)]
+        action: AdminAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminAction {
+    /// Initialize servers with data from a CSV file
+    Init {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+        /// Path to the CSV file
+        #[arg(short, long, required = true)]
+        file: String,
+    },
+    /// Insert a new key-value pair
+    Insert {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+        /// Key to insert
+        #[arg(short, long, required = true)]
+        key: String,
+        /// Value to insert
+        #[arg(short, long, required = true)]
+        value: String,
+    },
 }
 
 async fn run_server(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -23,80 +75,25 @@ async fn run_server(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} [server <port>|client|admin]", args[0]);
-        return Ok(());
-    }
-    match args[1].as_str() {
-        "server" => {
-            if args.len() != 3 {
-                eprintln!("Usage: {} server <port>", args[0]);
-                return Ok(());
-            }
-            let addr = format!("127.0.0.1:{}", args[2]);
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Server { addr } => {
             run_server(&addr).await?;
         }
-        "client" => {
-            // Connect to two servers running on ports 50051 and 50052.
-            let server_addrs = ["127.0.0.1:50051", "127.0.0.1:50052"];
-            client::run_client(&server_addrs).await?;
+        Commands::Client { servers } => {
+            let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
+            client::run_client(&server_refs).await?;
         }
-        "admin" => {
-            // Connect to two servers running on ports 50051 and 50052.
-            let server_addrs = ["127.0.0.1:50051", "127.0.0.1:50052"];
-            let server_addrs: Vec<String> = server_addrs.iter().map(|&s| s.to_string()).collect();
-            
-            // Check if we're doing an insert operation
-            if args.len() >= 3 && args[2] == "-i" {
-                let mut key = String::new();
-                let mut value = String::new();
-                
-                // Parse key and value from arguments
-                let mut i = 3;
-                while i < args.len() {
-                    match args[i].as_str() {
-                        "-k" => {
-                            if i + 1 < args.len() {
-                                key = args[i + 1].clone();
-                                i += 2;
-                            } else {
-                                eprintln!("Missing value for -k parameter");
-                                return Ok(());
-                            }
-                        },
-                        "-v" => {
-                            if i + 1 < args.len() {
-                                value = args[i + 1].clone();
-                                i += 2;
-                            } else {
-                                eprintln!("Missing value for -v parameter");
-                                return Ok(());
-                            }
-                        },
-                        _ => {
-                            i += 1;
-                        }
-                    }
+        Commands::Admin { action } => {
+            match action {
+                AdminAction::Init { servers, file } => {
+                    server_admin::run_admin_client(&file, &servers).await?;
                 }
-                
-                if key.is_empty() {
-                    eprintln!("Key parameter (-k) is required");
-                    return Ok(());
+                AdminAction::Insert { servers, key, value } => {
+                    server_admin::update_servers(key, value, &servers).await?;
                 }
-                
-                if value.is_empty() {
-                    eprintln!("Value parameter (-v) is required");
-                    return Ok(());
-                }
-                
-                server_admin::update_servers(key, value, &server_addrs).await?;
-            } else {
-                server_admin::run_admin_client("./data/dummy_data.csv", &server_addrs).await?;
             }
-        }
-        _ => {
-            eprintln!("Invalid command: {}", args[1]);
         }
     }
     Ok(())

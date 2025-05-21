@@ -1,5 +1,5 @@
-use std::env;
 use tonic::transport::Server;
+use clap::{Parser, Subcommand};
 mod client;
 mod server;
 mod server_admin;
@@ -8,6 +8,37 @@ use crate::ms_kpir::pir_service_private_update_server::PirServicePrivateUpdateSe
 
 pub mod ms_kpir {
     tonic::include_proto!("ms_kpir");
+}
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start a server instance
+    Server {
+        /// Server address (e.g., 127.0.0.1:50051)
+        addr: String,
+    },
+    /// Run the client
+    Client {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+    },
+    /// Run the admin client
+    Admin {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+        /// Path to the CSV file
+        #[arg(short, long, required = true)]
+        file: String,
+    },
 }
 
 async fn run_server(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -23,34 +54,18 @@ async fn run_server(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} [server <port>|client|admin]", args[0]);
-        return Ok(());
-    }
-    match args[1].as_str() {
-        "server" => {
-            if args.len() != 3 {
-                eprintln!("Usage: {} server <port>", args[0]);
-                return Ok(());
-            }
-            let addr = format!("127.0.0.1:{}", args[2]);
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Server { addr } => {
             run_server(&addr).await?;
         }
-        "client" => {
-            // Connect to two servers running on ports
-            let server_addrs = ["127.0.0.1:50051", "127.0.0.1:50052", "127.0.0.1:50053", "127.0.0.1:50054"];
-            client::run_client(&server_addrs).await?;
+        Commands::Client { servers } => {
+            let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
+            client::run_client(&server_refs).await?;
         }
-        "admin" => {
-            // Connect to two servers running on ports
-            let server_addrs = ["127.0.0.1:50051", "127.0.0.1:50052", "127.0.0.1:50053", "127.0.0.1:50054"];
-            let server_addrs: Vec<String> = server_addrs.iter().map(|&s| s.to_string()).collect();
-            server_admin::run_admin_client("./data/dummy_data.csv", &server_addrs).await?;
-            
-        }
-        _ => {
-            eprintln!("Invalid command: {}", args[1]);
+        Commands::Admin { servers, file } => {
+            server_admin::run_admin_client(&file, &servers).await?;
         }
     }
     Ok(())
