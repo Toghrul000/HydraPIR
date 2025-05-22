@@ -48,16 +48,14 @@ impl Error for CuckooError {}
 // --- Private Helper Functions ---
 
 /// Encodes (key: &str, value: &str) into a fixed-size Entry ([u64; N]).
-/// Internal function, generic over N.
 pub fn encode_entry<const N: usize>(
     key: &str,
     value: &str,
 ) -> Result<Entry<N>, CuckooError> {
-    let ENTRY_SIZE_BYTES: usize = N * 8; // Calculate byte size from N
-    if ENTRY_SIZE_BYTES < 4 {
-        // Need at least 4 bytes for the two u16 lengths
+    let ENTRY_SIZE_BYTES: usize = N * 8;
+    if ENTRY_SIZE_BYTES < 16 {
         return Err(CuckooError::EncodingError(
-            "Entry size (N * 8) must be at least 4 bytes.".to_string(),
+            "Entry size (N * 8) must be at least 16 bytes.".to_string(),
         ));
     }
 
@@ -66,15 +64,11 @@ pub fn encode_entry<const N: usize>(
     let key_len = key_bytes.len();
     let value_len = value_bytes.len();
 
-    if key_len > u16::MAX as usize || value_len > u16::MAX as usize {
-        return Err(CuckooError::EncodingError(
-            "Key or value length exceeds u16::MAX".to_string(),
-        ));
-    }
-    let key_len_u16 = key_len as u16;
-    let value_len_u16 = value_len as u16;
+    // No need to check against u64::MAX as it's practically impossible to exceed
+    let key_len_u64 = key_len as u64;
+    let value_len_u64 = value_len as u64;
 
-    let total_byte_size = 2 + 2 + key_len + value_len;
+    let total_byte_size = 8 + 8 + key_len + value_len; // 8 bytes for each length field
     if total_byte_size > ENTRY_SIZE_BYTES {
         return Err(CuckooError::EncodingError(format!(
             "Encoded entry byte size ({}) exceeds configured ENTRY_SIZE ({})",
@@ -83,9 +77,9 @@ pub fn encode_entry<const N: usize>(
     }
 
     let mut byte_buffer = vec![0u8; ENTRY_SIZE_BYTES];
-    byte_buffer[0..2].copy_from_slice(&key_len_u16.to_le_bytes());
-    byte_buffer[2..4].copy_from_slice(&value_len_u16.to_le_bytes());
-    let key_start = 4;
+    byte_buffer[0..8].copy_from_slice(&key_len_u64.to_le_bytes());
+    byte_buffer[8..16].copy_from_slice(&value_len_u64.to_le_bytes());
+    let key_start = 16;
     let key_end = key_start + key_len;
     byte_buffer[key_start..key_end].copy_from_slice(key_bytes);
     let value_start = key_end;
@@ -105,15 +99,14 @@ pub fn encode_entry<const N: usize>(
 }
 
 /// Decodes a fixed-size Entry ([u64; N]) back into (key: String, value: String).
-/// Internal function, generic over N.
 pub fn decode_entry<const N: usize>(
     entry: &Entry<N>,
 ) -> Result<Option<(String, String)>, CuckooError> {
-    let EMPTY_SLOT_N: Entry<N> = [0u64; N]; // Define empty slot locally based on N
+    let EMPTY_SLOT_N: Entry<N> = [0u64; N];
     let ENTRY_SIZE_BYTES: usize = N * 8;
-     if ENTRY_SIZE_BYTES < 4 {
+    if ENTRY_SIZE_BYTES < 16 {
         return Err(CuckooError::DecodingError(
-            "Entry size (N * 8) must be at least 4 bytes.".to_string(),
+            "Entry size (N * 8) must be at least 16 bytes.".to_string(),
         ));
     }
 
@@ -129,18 +122,17 @@ pub fn decode_entry<const N: usize>(
         byte_buffer[byte_chunk_start..byte_chunk_end].copy_from_slice(&bytes);
     }
 
-    let key_len_bytes: [u8; 2] = byte_buffer[0..2].try_into().unwrap();
-    let key_len = u16::from_le_bytes(key_len_bytes) as usize;
-    let value_len_bytes: [u8; 2] = byte_buffer[2..4].try_into().unwrap();
-    let value_len = u16::from_le_bytes(value_len_bytes) as usize;
+    let key_len_bytes: [u8; 8] = byte_buffer[0..8].try_into().unwrap();
+    let key_len = u64::from_le_bytes(key_len_bytes) as usize;
+    let value_len_bytes: [u8; 8] = byte_buffer[8..16].try_into().unwrap();
+    let value_len = u64::from_le_bytes(value_len_bytes) as usize;
 
     if key_len == 0 && value_len == 0 {
-        // Should have been caught by the entry == &EMPTY_SLOT_N check if truly empty
         println!("Warning: Decoded entry has zero lengths but wasn't EMPTY_SLOT. Treating as empty.");
         return Ok(None);
     }
 
-    let key_start = 4;
+    let key_start = 16;
     let key_end = key_start + key_len;
     let value_start = key_end;
     let value_end = value_start + value_len;

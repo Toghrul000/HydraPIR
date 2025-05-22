@@ -210,35 +210,25 @@ impl PirServicePrivateUpdate for MyPIRService {
         let server_id = query.server_id as usize;
         let bucket_keys = query.bucket_key;
         
-        // Get hash key and AES key from client sessions
-        let (hash_key, aes_key) = {
-            let sessions = self.client_sessions.lock().await;
-            let session = sessions.get(&client_id).ok_or_else(|| {
-                Status::not_found(format!("Client session not found: {}", client_id))
-            })?;
-            
-            (session.hash_key.clone(), session.aes_key.clone())
-        };
-        
-        // Convert to fixed-size array
-        let hash_key: [u8; 16] = hash_key.try_into().map_err(|_| {
+        // Get hash key and AES key from client sessions - keep lock alive
+        let sessions = self.client_sessions.lock().await;
+        let session = sessions.get(&client_id).ok_or_else(|| {
+            Status::not_found(format!("Client session not found: {}", client_id))
+        })?;
+
+        let hash_key: [u8; 16] = session.hash_key.as_slice().try_into().map_err(|_| {
             Status::internal("Invalid hash key size")
         })?;
         
-        // Create AES instance
-        let aes_key: [u8; 16] = aes_key.try_into().map_err(|_| {
+        let aes_key: [u8; 16] = session.aes_key.as_slice().try_into().map_err(|_| {
             Status::internal("Invalid AES key size")
         })?;
         let aes = create_aes(&aes_key);
         
-        // Get table and configuration
-        let (table, num_buckets, bucket_size) = {
-            let cuckoo_table = self.cuckoo_table.lock().await;
-            let num_buckets = *self.num_buckets.lock().await;
-            let bucket_size = *self.bucket_size.lock().await;
-            
-            (cuckoo_table.table.clone(), num_buckets, bucket_size)
-        };
+        // Get table and configuration - keep locks alive for the duration of query evaluation
+        let cuckoo_table = self.cuckoo_table.lock().await;
+        let num_buckets = *self.num_buckets.lock().await;
+        let bucket_size = *self.bucket_size.lock().await;
         
         // Convert protobuf DPFKey to Rust DPFKey
         let dpf_keys = bucket_keys.into_iter().map(|proto_key| {
@@ -273,12 +263,11 @@ impl PirServicePrivateUpdate for MyPIRService {
             })
         }).collect::<Result<Vec<_>, _>>()?;
         
-        
-        // Evaluate the query
+        // Evaluate the query - using references to table and other data
         let results = dmpf_pir_query_eval_additive::<ENTRY_U64_COUNT>(
             server_id,
             &dpf_keys,
-            &table,
+            &cuckoo_table.table,  
             num_buckets,
             bucket_size,
             &hash_key,
@@ -313,23 +302,19 @@ impl PirServicePrivateUpdate for MyPIRService {
             Status::invalid_argument("Missing update key in request")
         })?;
         
-        // Get hash key and AES key from client sessions
-        let (hash_key, aes_key) = {
-            let sessions = self.client_sessions.lock().await;
-            let session = sessions.get(&client_id).ok_or_else(|| {
-                Status::not_found(format!("Client session not found: {}", client_id))
-            })?;
-            
-            (session.hash_key.clone(), session.aes_key.clone())
-        };
+        // Get hash key and AES key from client sessions - keep lock alive
+        let sessions = self.client_sessions.lock().await;
+        let session = sessions.get(&client_id).ok_or_else(|| {
+            Status::not_found(format!("Client session not found: {}", client_id))
+        })?;
         
-        // Convert to fixed-size array
-        let hash_key: [u8; 16] = hash_key.try_into().map_err(|_| {
+        // Convert to fixed-size array - no need to clone since we're converting to fixed size
+        let hash_key: [u8; 16] = session.hash_key.as_slice().try_into().map_err(|_| {
             Status::internal("Invalid hash key size")
         })?;
         
-        // Create AES instance
-        let aes_key: [u8; 16] = aes_key.try_into().map_err(|_| {
+        // Create AES instance - no need to clone since we're converting to fixed size
+        let aes_key: [u8; 16] = session.aes_key.as_slice().try_into().map_err(|_| {
             Status::internal("Invalid AES key size")
         })?;
         let aes = create_aes(&aes_key);
@@ -366,16 +351,14 @@ impl PirServicePrivateUpdate for MyPIRService {
         };
 
         // Get mutable access to the table and evaluate the DPF key directly
-        {
-            let mut cuckoo_table = self.cuckoo_table.lock().await;
-            dpf_half_tree_lib::dpf_priv_update_additive::<ENTRY_U64_COUNT>(
-                server_id as u8,
-                &dpf_key,
-                &mut cuckoo_table.table,
-                &hash_key,
-                &aes,
-            );
-        }
+        let mut cuckoo_table = self.cuckoo_table.lock().await;
+        dpf_half_tree_lib::dpf_priv_update_additive::<ENTRY_U64_COUNT>(
+            server_id as u8,
+            &dpf_key,
+            &mut cuckoo_table.table,
+            &hash_key,
+            &aes,
+        );
 
         Ok(Response::new(SyncResponse {
             success: true,
@@ -476,7 +459,7 @@ impl PirServicePrivateUpdate for MyPIRService {
             println!("Remaining failed insertions after loop: {}", final_failed_count);
         }
 
-        println!("TEST db[1] = {:?}", cuckoo_table.table[1]);
+        // println!("TEST db[1] = {:?}", cuckoo_table.table[1]);
 
         Ok(Response::new(SyncResponse {
             success: true,
@@ -721,7 +704,7 @@ impl PirServicePrivateUpdate for MyPIRService {
         cuckoo_table.num_total_buckets = config_data_proto.num_total_buckets as usize;
         cuckoo_table.slots_per_bucket = config_data_proto.slots_per_bucket as usize;
 
-        println!("TEST db[1] = {:?}", cuckoo_table.table[1]);
+        // println!("TEST db[1] = {:?}", cuckoo_table.table[1]);
 
         Ok(Response::new(SyncResponse {
             success: true,

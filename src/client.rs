@@ -6,6 +6,7 @@ use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand::RngCore;
+use futures::future::join_all;
 use uuid::Uuid;
 use std::error::Error;
 use std::io::{self, Write};

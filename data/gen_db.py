@@ -15,8 +15,8 @@ def generate_fixed_size_csv(filename, n, total_len):
         total_len: The target total byte length for each row (key,value), excluding newline.
                    The actual used length will be total_len - 4.
     """
-    # Adjust total_len since encoding adds 4 bytes
-    actual_row_len = total_len - 4
+    # Adjust total_len since encoding adds 16 bytes header that is length of the key and length of the value
+    actual_row_len = total_len - 16 
 
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
@@ -46,9 +46,9 @@ def generate_fixed_size_csv(filename, n, total_len):
             writer.writerow([key, value])
 
 # Example usage
-# Generates a CSV with approximately 90% of 2^20 rows, with each row being 252 bytes (256 - 4)
+# Generates a CSV with approximately 90% of 2^20 rows, with each row being 252 bytes (256 - 16)
 generate_fixed_size_csv('dummy_data_n_20.csv', 20, 256)
-# Generates a CSV with approximately 90% of 2^17 rows, with each row being (30000 - 4) bytes
+# Generates a CSV with approximately 90% of 2^17 rows, with each row being (30000 - 16) bytes
 generate_fixed_size_csv('dummy_data_n_17.csv', 17, 30000)
-# Generates a CSV with approximately 90% of 2^14 rows, with each row being (100000 - 4) bytes
+# Generates a CSV with approximately 90% of 2^14 rows, with each row being (100000 - 16) bytes
 generate_fixed_size_csv('dummy_data_n_14.csv', 14, 100000)
