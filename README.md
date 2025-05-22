@@ -12,7 +12,7 @@ This project implements two Private Information Retrieval (PIR) schemes for key-
 
 ## Basic Scheme (kpir)
 
-This scheme implements a basic PIR protocol with non-private updates. It requires 2 servers to operate.
+This scheme implements a PIR protocol with non-private updates. It requires 2 servers to operate.
 
 ### Available Commands
 
@@ -44,7 +44,7 @@ cargo run --release --bin kpir server 127.0.0.1:50052
 
 2. Initialize servers with data:
 ```bash
-cargo run --release --bin kpir admin init -s 127.0.0.1:50051 127.0.0.1:50052 -f "./data/dummy_data.csv"
+cargo run --release --bin kpir admin init -s 127.0.0.1:50051 127.0.0.1:50052 -f "./data/dummy_data_n_20.csv"
 ```
 
 3. (Optional) Insert a new key-value pair:
@@ -93,7 +93,7 @@ cargo run --release --bin kpir_priv_upt server 127.0.0.1:50054
 
 2. Initialize servers with data:
 ```bash
-cargo run --release --bin kpir_priv_upt admin -s 127.0.0.1:50051 127.0.0.1:50052 127.0.0.1:50053 127.0.0.1:50054 -f "./data/dummy_data.csv"
+cargo run --release --bin kpir_priv_upt admin -s 127.0.0.1:50051 127.0.0.1:50052 127.0.0.1:50053 127.0.0.1:50054 -f "./data/dummy_data_n_20.csv"
 ```
 
 3. Run the client to query data:
@@ -109,4 +109,47 @@ cargo run --bin kpir -- --help
 cargo run --bin kpir server --help
 cargo run --bin kpir admin --help
 cargo run --bin kpir_priv_upt -- --help
-``` 
+```
+
+## Benchmarks
+
+This will run several benchmarks:
+- DPF Key Generation: Measures the time to generate DPF keys
+- Individual Server Response Times: Measures response time for each server separately
+- Reconstruction Time: Measures the time to reconstruct the final result from server responses
+
+### Running Individual Benchmarks
+IMPORTANT: Before running benchmark commands you need have started servers and intialized them with data (Since bench client connects to those), look above on how to do that.
+
+You can run specific benchmarks using the following commands:
+
+For the Regular PIR scheme:
+```bash
+# Run all Regular PIR benchmarks
+cargo bench --bench pir_benchmarks
+
+# Run specific Regular PIR benchmarks
+cargo bench --bench pir_benchmarks -- DPF\ Key\ Generation
+cargo bench --bench pir_benchmarks -- Individual\ Server\ Response\ Times
+cargo bench --bench pir_benchmarks -- Reconstruction\ Time
+```
+
+For the private update scheme:
+```bash
+# Run all private update benchmarks
+cargo bench --bench pir_priv_upt_benchmarks
+
+# Run specific private update benchmarks
+cargo bench --bench pir_priv_upt_benchmarks -- DPF\ Key\ Generation\ \(Private\ Update\)
+cargo bench --bench pir_priv_upt_benchmarks -- Individual\ Server\ Response\ Times\ \(Private\ Update\)
+cargo bench --bench pir_priv_upt_benchmarks -- Private\ Update
+cargo bench --bench pir_priv_upt_benchmarks -- Reconstruction\ Time\ \(Private\ Update\)
+```
+
+Note: The benchmarks use localhost servers by default:
+- Regular PIR scheme: 127.0.0.1:50051 and 127.0.0.1:50052
+- Private update scheme: 127.0.0.1:50051, 127.0.0.1:50052, 127.0.0.1:50053, and 127.0.0.1:50054
+
+Make sure these servers are running before running the benchmarks.
+
+The benchmark results will be displayed in the terminal and also saved in `target/criterion/`. 

@@ -1526,7 +1526,7 @@ pub fn dmpf_pir_query_gen(
         }
     }
 
-    println!("Generating DPF keys per bucket...");
+    //println!("Generating DPF keys per bucket...");
     for bucket_idx in 0..num_buckets {
         let bucket_start_idx = (bucket_idx * bucket_size) as u32;
         let bucket_end_idx = bucket_start_idx + bucket_size as u32;
@@ -1536,10 +1536,10 @@ pub fn dmpf_pir_query_gen(
         for (global_idx, value) in target_points {
             if *global_idx >= bucket_start_idx && *global_idx < bucket_end_idx {
                 let local_idx = global_idx - bucket_start_idx;
-                println!(
-                    "  Found point {} in bucket {} (local index {})",
-                    global_idx, bucket_idx, local_idx
-                );
+                // println!(
+                //     "  Found point {} in bucket {} (local index {})",
+                //     global_idx, bucket_idx, local_idx
+                // );
                 // Generate keys for this specific point
                 let (k0, k1) = dpf_gen(
                     local_idx,
@@ -1555,10 +1555,10 @@ pub fn dmpf_pir_query_gen(
         }
         // If no points found in this bucket, generate keys for a zero function
         if current_bucket_point_count == 0 {
-            println!(
-                "  No target points in bucket {}. Generating zero function keys.",
-                bucket_idx
-            );
+            // println!(
+            //     "  No target points in bucket {}. Generating zero function keys.",
+            //     bucket_idx
+            // );
             let (k0, k1) = dpf_gen(
                 0, // Arbitrary index for zero function
                 0, // Value is zero
@@ -1571,7 +1571,7 @@ pub fn dmpf_pir_query_gen(
             client_keys[1][bucket_idx] = k1;
         }
     }
-    println!("DPF key generation complete.");
+    //println!("DPF key generation complete.");
     client_keys
 }
 
@@ -1750,14 +1750,14 @@ pub fn dmpf_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
     all_server_results: &[Vec<[i64; ENTRY_U64_SIZE]>],
     num_buckets: usize,
 ) -> Vec<Entry<ENTRY_U64_SIZE>> {
-    println!("\n--- Client-Side Reconstruction (Multi-Server Vector) ---");
+    //println!("\n--- Client-Side Reconstruction (Multi-Server Vector) ---");
 
     // --- Initial Validation ---
     if all_server_results.is_empty() {
         panic!("Received results from zero servers.");
     }
     let num_servers = all_server_results.len();
-    println!("Reconstructing from {} servers.", num_servers);
+    //println!("Reconstructing from {} servers.", num_servers);
 
     // Check if all servers reported results for the expected number of buckets
     for (server_id, results) in all_server_results.iter().enumerate() {
@@ -1794,7 +1794,7 @@ pub fn dmpf_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
         reconstructed_entries.push(result_u64);
     }
 
-    println!("Reconstruction complete.");
+    //println!("Reconstruction complete.");
     reconstructed_entries
 }
 

@@ -1,6 +1,9 @@
-use crate::ms_kpir::pir_service_client::PirServiceClient;
-use crate::ms_kpir::{ClientSessionInitRequest, BucketKeys, DpfKey, CuckooKeys};
-use crate::ms_kpir::dpf_key;
+use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use std::time::Duration;
+use tokio::runtime::Runtime;
+use kpir::ms_kpir::pir_service_client::PirServiceClient;
+use kpir::ms_kpir::{ClientSessionInitRequest, BucketKeys, DpfKey, CuckooKeys, ClientCleanupRequest};
+use kpir::ms_kpir::dpf_key;
 use cuckoo_lib::get_hierarchical_indices;
 use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers};
 use rand::rngs::StdRng;
@@ -8,12 +11,12 @@ use rand::SeedableRng;
 use rand::RngCore;
 use uuid::Uuid;
 use std::error::Error;
-use std::io::{self, Write};
 use aes::Aes128;
 use aes::cipher::{KeyInit, generic_array::GenericArray};
-
 use kpir::config::ENTRY_U64_COUNT;
-// const ENTRY_U64_COUNT: usize = 32; // 32 u64s = 256 bytes
+
+// Default server addresses for benchmarks
+const DEFAULT_SERVERS: [&str; 2] = ["127.0.0.1:50051", "127.0.0.1:50052"];
 
 #[derive(Clone)]
 pub struct ClientSession {
@@ -197,11 +200,6 @@ pub async fn execute_pir_query_and_display_results(
         server_futures.push(client_future);
     }
 
-    // // Wait for all server responses in parallel
-    // let answers = join_all(server_futures).await
-    //     .into_iter()
-    //     .collect::<Result<Vec<_>, _>>()?;
-
     // Sequentially wait
     let mut answers = Vec::new();
     for future in server_futures {
@@ -231,7 +229,7 @@ pub async fn execute_pir_query_and_display_results(
 
     // --- Display Final Results ---
     let mut query_result = None;
-    println!("Reconstructed results per bucket:");
+    //println!("Reconstructed results per bucket:");
     
     // Calculate which bucket each global index belongs to
     let bucket_size = session.bucket_size as usize;
@@ -249,17 +247,17 @@ pub async fn execute_pir_query_and_display_results(
         // Use the decode_entry from cuckoo_lib to decode the entry
         match cuckoo_lib::decode_entry(slot) {
             Ok(Some((key, value))) => {
-                println!("  Bucket {}: key=\"{}\", value=\"{}\"", bucket_idx, key, value);
+                //println!("  Bucket {}: key=\"{}\", value=\"{}\"", bucket_idx, key, value);
                 // Check if this is the key we queried for
                 if key == input_query_key && global_index.is_some() {
                     query_result = Some((global_index.unwrap(), value, slot.clone()));
                 }
             },
             Ok(None) => {
-                println!("  Bucket {}: Empty slot", bucket_idx);
+                //println!("  Bucket {}: Empty slot", bucket_idx);
             },
-            Err(e) => {
-                println!("  Bucket {}: Error decoding: {:?}", bucket_idx, e);
+            Err(_e) => {
+                //println!("  Bucket {}: Error decoding: {:?}", bucket_idx, e);
             }
         }
     }
@@ -280,7 +278,7 @@ pub async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&st
     for &addr in server_addrs {
         let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
         
-        let cleanup_request = crate::ms_kpir::ClientCleanupRequest {
+        let cleanup_request = ClientCleanupRequest {
             client_id: session.client_id.clone(),
         };
         
@@ -301,53 +299,261 @@ pub async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&st
     Ok(())
 }
 
-pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize client session
-    let session = initialize_session(server_addrs).await?;
+async fn setup_benchmark_session() -> ClientSession {
+    // Initialize a session with the running servers
+    initialize_session(&DEFAULT_SERVERS).await.expect("Failed to initialize session")
+}
 
-    loop {
-        println!("\nChoose operation:");
-        println!("1. PIR Query");
-        println!("2. Exit");
-        print!("Enter choice (1,2): ");
-        io::stdout().flush().unwrap();
+fn bench_dpf_key_generation(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let session = rt.block_on(setup_benchmark_session());
+    
+    let mut group = c.benchmark_group("DPF Key Generation");
+    group.measurement_time(Duration::from_secs(10));
+    
+    // Test with different query keys
+    let test_keys = ["key5000"];
+    
+    for key in test_keys.iter() {
+        group.bench_with_input(BenchmarkId::new("key_gen", key), key, |b, &query_key| {
+            b.iter(|| {
+                let global_indexes = cuckoo_lib::get_hierarchical_indices(
+                    &session.bucket_selection_key,
+                    &session.local_hash_keys,
+                    &session.local_hash_keys.len(),
+                    &(session.num_buckets as usize),
+                    &(session.bucket_size as usize),
+                    query_key
+                );
+                
+                let beta = 1;
+                let target_points: Vec<(u32, u32)> = global_indexes.iter()
+                    .map(|x| (*x as u32, beta))
+                    .collect();
+                
+                let aes = create_aes(&session.aes_key);
+                black_box(dmpf_pir_query_gen(
+                    &target_points,
+                    session.num_buckets as usize,
+                    session.bucket_size as usize,
+                    session.bucket_bits,
+                    &session.hash_key,
+                    &aes
+                ))
+            });
+        });
+    }
+    group.finish();
+}
 
-        let mut choice = String::new();
-        io::stdin().read_line(&mut choice).expect("Failed to read input");
-        let choice = choice.trim();
+fn bench_server_response_times(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let session = rt.block_on(setup_benchmark_session());
+    
+    let mut group = c.benchmark_group("Server Response Times");
+    group.measurement_time(Duration::from_secs(10));
+    
+    // Test with different query keys
+    let test_keys = ["key5000"];
+    
+    for key in test_keys.iter() {
+        group.bench_with_input(BenchmarkId::new("server_response", key), key, |b, &query_key| {
+            b.iter(|| {
+                rt.block_on(async {
+                    black_box(execute_pir_query_and_display_results(
+                        &session,
+                        &DEFAULT_SERVERS,
+                        query_key
+                    ).await)
+                })
+            });
+        });
+    }
+    group.finish();
+}
 
-        match choice {
-            "1" => {
-                print!("Enter key to query: ");
-                io::stdout().flush().unwrap();
-                let mut input = String::new();
-                io::stdin().read_line(&mut input).expect("Failed to read input");
-                let input_query_key = input.trim();
+fn bench_individual_server_response_times(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let session = rt.block_on(setup_benchmark_session());
+    
+    let mut group = c.benchmark_group("Individual Server Response Times");
+    group.measurement_time(Duration::from_secs(10));
+    
+    let test_keys = ["key5000"];
+    
+    for (server_idx, &server_addr) in DEFAULT_SERVERS.iter().enumerate() {
+        for key in test_keys.iter() {
+            let bench_id = format!("server_{}_response", server_idx);
+            group.bench_with_input(BenchmarkId::new(bench_id, key), key, |b, &query_key| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await.expect("Failed to connect to server");
+                        
+                        // Generate the query for this server
+                        let global_indexes = get_hierarchical_indices(
+                            &session.bucket_selection_key,
+                            &session.local_hash_keys,
+                            &session.local_hash_keys.len(),
+                            &(session.num_buckets as usize),
+                            &(session.bucket_size as usize),
+                            query_key
+                        );
+                        
+                        let beta = 1;
+                        let target_points: Vec<(u32, u32)> = global_indexes.iter()
+                            .map(|x| (*x as u32, beta))
+                            .collect();
+                        
+                        let aes = create_aes(&session.aes_key);
+                        let client_keys = dmpf_pir_query_gen(
+                            &target_points,
+                            session.num_buckets as usize,
+                            session.bucket_size as usize,
+                            session.bucket_bits,
+                            &session.hash_key,
+                            &aes
+                        );
+                        
+                        let client_keys_for_server = &client_keys[server_idx];
+                        let proto_bucket_keys = client_keys_for_server.iter().map(|key| {
+                            let cwn = dpf_key::Cwn {
+                                hcw: key.cw_n.0.to_vec(),
+                                lcw0: key.cw_n.1 as u32,
+                                lcw1: key.cw_n.2 as u32,
+                            };
+                            
+                            DpfKey {
+                                n: key.n as u32,
+                                seed: key.seed.to_vec(),
+                                cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
+                                cw_n: Some(cwn),
+                                cw_np1: key.cw_np1,
+                            }
+                        }).collect();
 
-                let query_result = execute_pir_query_and_display_results(&session, server_addrs, input_query_key).await;
+                        let request = tonic::Request::new(BucketKeys {
+                            client_id: session.client_id.clone(),
+                            server_id: server_idx as u32,
+                            bucket_key: proto_bucket_keys,
+                        });
 
-                match query_result {
-                    Ok(res) => {
-                        if let Some((global_idx, value_string, _entry)) = res {
-                            println!("Query key '{}' Value = {} found at global index: {}", input_query_key, value_string, global_idx);
-                        } else {
-                            println!("Query key not found in the DB");
-                        }
-                    },
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            },
-            "2" => {
-                println!("Cleaning up client session before exit...");
-                if let Err(e) = cleanup_client_session(&session, server_addrs).await {
-                    eprintln!("Error during cleanup: {}", e);
-                }
-                println!("Exiting client...");
-                break;
-            },
-            _ => println!("Invalid choice. Please enter 1 or 2."),
+                        black_box(client.pir_query(request).await)
+                    })
+                });
+            });
         }
     }
-
-    Ok(())
+    group.finish();
 }
+
+fn bench_reconstruction(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let session = rt.block_on(setup_benchmark_session());
+    
+    let mut group = c.benchmark_group("Reconstruction Time");
+    group.measurement_time(Duration::from_secs(10));
+    
+    let test_keys = ["key5000"];
+    
+    for key in test_keys.iter() {
+        // Setup: Get all server responses outside the benchmark
+        let all_server_results = rt.block_on(async {
+            let mut results = Vec::new();
+            for (server_idx, &server_addr) in DEFAULT_SERVERS.iter().enumerate() {
+                let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await.expect("Failed to connect");
+                
+                let global_indexes = get_hierarchical_indices(
+                    &session.bucket_selection_key,
+                    &session.local_hash_keys,
+                    &session.local_hash_keys.len(),
+                    &(session.num_buckets as usize),
+                    &(session.bucket_size as usize),
+                    key
+                );
+                
+                let beta = 1;
+                let target_points: Vec<(u32, u32)> = global_indexes.iter()
+                    .map(|x| (*x as u32, beta))
+                    .collect();
+                
+                let aes = create_aes(&session.aes_key);
+                let client_keys = dmpf_pir_query_gen(
+                    &target_points,
+                    session.num_buckets as usize,
+                    session.bucket_size as usize,
+                    session.bucket_bits,
+                    &session.hash_key,
+                    &aes
+                );
+                
+                let client_keys_for_server = &client_keys[server_idx];
+                let proto_bucket_keys = client_keys_for_server.iter().map(|key| {
+                    let cwn = dpf_key::Cwn {
+                        hcw: key.cw_n.0.to_vec(),
+                        lcw0: key.cw_n.1 as u32,
+                        lcw1: key.cw_n.2 as u32,
+                    };
+                    
+                    DpfKey {
+                        n: key.n as u32,
+                        seed: key.seed.to_vec(),
+                        cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
+                        cw_n: Some(cwn),
+                        cw_np1: key.cw_np1,
+                    }
+                }).collect();
+
+                let request = tonic::Request::new(BucketKeys {
+                    client_id: session.client_id.clone(),
+                    server_id: server_idx as u32,
+                    bucket_key: proto_bucket_keys,
+                });
+
+                let response = client.pir_query(request).await.expect("Query failed");
+                let server_response = response.into_inner();
+                
+                let bucket_results: Vec<[i64; ENTRY_U64_COUNT]> = server_response.bucket_result.into_iter()
+                    .map(|bucket_result| {
+                        let mut array = [0i64; ENTRY_U64_COUNT];
+                        for (i, val) in bucket_result.value.into_iter().enumerate() {
+                            if i < ENTRY_U64_COUNT {
+                                array[i] = val as i64;
+                            }
+                        }
+                        array
+                    })
+                    .collect();
+                results.push(bucket_results);
+            }
+            results
+        });
+
+        // Only benchmark the reconstruction part
+        group.bench_with_input(BenchmarkId::new("reconstruction", key), key, |b, _| {
+            b.iter(|| {
+                black_box(dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
+                    &all_server_results,
+                    session.num_buckets as usize,
+                ));
+            });
+        });
+    }
+    group.finish();
+}
+
+// Configure the benchmark group with default settings
+criterion_group! {
+    name = benches;
+    // Use Criterion's default configuration
+    // - sample_size: 100 (number of samples to take)
+    // - measurement_time: 5s (time to spend measuring each benchmark)
+    // - plots: true (generate plots for results)
+    // - warm_up_time: 3s (time to warm up before measuring)
+    // - bootstrap_size: 100_000 (number of resamples for statistical analysis)
+    config = Criterion::default();
+    targets = bench_dpf_key_generation,
+             // bench_server_response_times,
+             bench_individual_server_response_times,
+             bench_reconstruction
+}
+criterion_main!(benches); 
