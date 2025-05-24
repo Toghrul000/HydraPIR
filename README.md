@@ -1,14 +1,30 @@
 # KPIR - Key-Value PIR Implementation
 
 This project implements two Private Information Retrieval (PIR) schemes for key-value stores:
-1. A basic scheme with non-private updates (kpir)
+
+1. A regular scheme with non-private updates (kpir)
 2. An advanced scheme with private updates (kpir_priv_upt)
 
 ## Prerequisites
 
 - Rust and Cargo installed
 - protoc for gRPC
-- CSV file with key-value pairs for initialization
+- CSV file with key-value pairs for initialization (Should contain key, value header; dummy data can be generated with ./data/gen_db.py)
+
+## Install `protoc` (Protocol Buffers Compiler)
+
+#### Linux (Debian/Ubuntu)
+
+```bash
+sudo apt update
+sudo apt install -y protobuf-compiler
+```
+
+#### Windows (using Chocolatey)
+
+```powershell
+choco install protoc
+```
 
 ## Basic Scheme (kpir)
 
@@ -34,6 +50,7 @@ cargo run --release --bin kpir admin insert -s <server1> <server2> -k <key> -v <
 ### Example Usage
 
 1. Start two servers:
+
 ```bash
 # Terminal 1
 cargo run --release --bin kpir server 127.0.0.1:50051
@@ -43,16 +60,19 @@ cargo run --release --bin kpir server 127.0.0.1:50052
 ```
 
 2. Initialize servers with data:
+
 ```bash
 cargo run --release --bin kpir admin init -s 127.0.0.1:50051 127.0.0.1:50052 -f "./data/dummy_data_n_20.csv"
 ```
 
 3. (Optional) Insert a new key-value pair:
+
 ```bash
 cargo run --release --bin kpir admin insert -s 127.0.0.1:50051 127.0.0.1:50052 -k "new_key" -v "new_value"
 ```
 
 4. Run the client to query data:
+
 ```bash
 cargo run --release --bin kpir client -s 127.0.0.1:50051 127.0.0.1:50052
 ```
@@ -77,6 +97,7 @@ cargo run --release --bin kpir_priv_upt admin -s <server1> <server2> <server3> <
 ### Example Usage
 
 1. Start four servers:
+
 ```bash
 # Terminal 1
 cargo run --release --bin kpir_priv_upt server 127.0.0.1:50051
@@ -92,11 +113,13 @@ cargo run --release --bin kpir_priv_upt server 127.0.0.1:50054
 ```
 
 2. Initialize servers with data:
+
 ```bash
 cargo run --release --bin kpir_priv_upt admin -s 127.0.0.1:50051 127.0.0.1:50052 127.0.0.1:50053 127.0.0.1:50054 -f "./data/dummy_data_n_20.csv"
 ```
 
 3. Run the client to query data:
+
 ```bash
 cargo run --release --bin kpir_priv_upt client -s 127.0.0.1:50051 127.0.0.1:50052 127.0.0.1:50053 127.0.0.1:50054
 ```
@@ -104,6 +127,7 @@ cargo run --release --bin kpir_priv_upt client -s 127.0.0.1:50051 127.0.0.1:5005
 ## Help
 
 For detailed help on any command, use the `--help` flag:
+
 ```bash
 cargo run --bin kpir -- --help
 cargo run --bin kpir server --help
@@ -114,16 +138,19 @@ cargo run --bin kpir_priv_upt -- --help
 ## Benchmarks
 
 This will run several benchmarks:
+
 - DPF Key Generation: Measures the time to generate DPF keys
 - Individual Server Response Times: Measures response time for each server separately
 - Reconstruction Time: Measures the time to reconstruct the final result from server responses
 
 ### Running Individual Benchmarks
+
 IMPORTANT: Before running benchmark commands you need have started servers and intialized them with data (Since bench client connects to those), look above on how to do that.
 
 You can run specific benchmarks using the following commands:
 
 For the Regular PIR scheme:
+
 ```bash
 # Run all Regular PIR benchmarks
 cargo bench --bench pir_benchmarks
@@ -135,6 +162,7 @@ cargo bench --bench pir_benchmarks -- Reconstruction\ Time
 ```
 
 For the private update scheme:
+
 ```bash
 # Run all private update benchmarks
 cargo bench --bench pir_priv_upt_benchmarks
@@ -147,9 +175,10 @@ cargo bench --bench pir_priv_upt_benchmarks -- Reconstruction\ Time\ \(Private\ 
 ```
 
 Note: The benchmarks use localhost servers by default:
+
 - Regular PIR scheme: 127.0.0.1:50051 and 127.0.0.1:50052
 - Private update scheme: 127.0.0.1:50051, 127.0.0.1:50052, 127.0.0.1:50053, and 127.0.0.1:50054
 
 Make sure these servers are running before running the benchmarks.
 
-The benchmark results will be displayed in the terminal and also saved in `target/criterion/`. 
+The benchmark results will be displayed in the terminal and also saved in `target/criterion/`.
