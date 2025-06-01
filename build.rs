@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Tell cargo to rerun this if the .env file changes
     println!("cargo:rerun-if-changed=.env");
     
-    // Load .env file
+    // Load .env file, but don't override existing environment variables
     dotenv().ok();
 
     // // Debug prints to show environment variables
@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::compile_protos("proto/ms_kpir.proto")?;
 
     // Get environment variables with defaults
+    // Note: env::var() will first check for command line variables, then fall back to .env file values
     let storage_mb = env::var("KPIR_STORAGE_MB").unwrap_or_else(|_| "256".to_string());
     let entry_size_bytes = env::var("KPIR_ENTRY_SIZE_BYTES").unwrap_or_else(|_| "256".to_string());
     let max_rehash_attempts = env::var("KPIR_MAX_REHASH_ATTEMPTS").unwrap_or_else(|_| "1".to_string());

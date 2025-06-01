@@ -887,56 +887,50 @@ pub fn dmpf_bit_pir_query_eval<const ENTRY_U64_SIZE: usize>(
     num_buckets: usize,
     bucket_size: usize,
     hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128, // Pass AES by reference
+    aes: &Aes128,
 ) -> Vec<[i64; ENTRY_U64_SIZE]> {
     println!("Server {} starting evaluation...", server_id);
     let start = Instant::now();
 
-    // Process buckets in parallel
-    let collected_results: Vec<[i64; ENTRY_U64_SIZE]> = (0..num_buckets)
-        .into_par_iter()
-        .map(|bucket_idx| {
-            let bucket_start_idx = bucket_idx * bucket_size;
-            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
+    let precompute_start = Instant::now();
+    let precomputed_seeds_cache: Vec<_> = server_keys.iter()
+        .map(|key| dpf_bit_eval_full_optimized(key, hs_key, aes))
+        .collect();
+    let precompute_duration = precompute_start.elapsed();
+    println!("Server {} precomputation took: {:?}", server_id, precompute_duration);
 
-            // Initialize result vector local to this parallel task
-            let mut bucket_result: [i64; ENTRY_U64_SIZE]= [0i64; ENTRY_U64_SIZE]; 
+    // Preallocate the results vector
+    let mut collected_results = vec![[0i64; ENTRY_U64_SIZE]; num_buckets];
 
-            // Precompute seeds for the current key
-            let precomputed_seeds = dpf_bit_eval_full_optimized(key, hs_key, aes);
+    // Process buckets in parallel with mutable access
+    collected_results.par_iter_mut().enumerate().for_each(|(bucket_idx, bucket_result)| {
+        let bucket_start_idx = bucket_idx * bucket_size;
+        let precomputed_seeds = &precomputed_seeds_cache[bucket_idx];
 
-            // Inner loop over DB entries in the bucket
-            for local_idx in 0..bucket_size {
-                let global_idx = bucket_start_idx + local_idx;
+        // Inner loop over DB entries in the bucket
+        for local_idx in 0..bucket_size {
+            let global_idx = bucket_start_idx + local_idx;
 
-                if global_idx >= db.len() {
-                    continue; // Skip if out of DB bounds
-                }
-                
-                let db_item_u64: &Entry<ENTRY_U64_SIZE> = &db[global_idx];
-
-                let byte_idx = local_idx / 8;
-                let bit_idx = local_idx % 8;
-                let bit_eval = (precomputed_seeds[byte_idx] >> bit_idx) & 1;
-
-
-                // Accumulate the result
-                for k in 0..ENTRY_U64_SIZE {
-                    bucket_result[k] ^= (db_item_u64[k] & 0u64.wrapping_sub(bit_eval as u64)) as i64;
-                }
-
+            if global_idx >= db.len() {
+                continue;
             }
+            
+            let db_item_u64: &Entry<ENTRY_U64_SIZE> = &db[global_idx];
 
-            // Return the computed results (shares) for this bucket
-            bucket_result
-        })
-        .collect(); // Collect the Vec<i64> results from all parallel bucket tasks
+            let byte_idx = local_idx / 8;
+            let bit_idx = local_idx % 8;
+            let bit_eval = (precomputed_seeds[byte_idx] >> bit_idx) & 1;
+            let mask = 0u64.wrapping_sub(bit_eval as u64);
+
+            // Accumulate the result
+            for k in 0..ENTRY_U64_SIZE {
+                bucket_result[k] ^= (db_item_u64[k] & mask) as i64;
+            }
+        }
+    });
 
     let duration = start.elapsed();
-    println!(
-        "Server {} evaluation complete,",
-        server_id
-    );
+    println!("Server {} evaluation complete,", server_id);
     println!("Time taken: {:?}", duration);
     println!("In seconds: {:.2}s", duration.as_secs_f64());
     println!("In milliseconds: {}ms", duration.as_millis());
@@ -957,18 +951,20 @@ pub fn dmpf_bit_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
     println!("Server {} starting evaluation...", server_id);
     let start = Instant::now();
 
-    // Process buckets in parallel
-    let collected_results: Vec<[i64; ENTRY_U64_SIZE]> = (0..num_buckets)
-        .into_par_iter()
-        .map(|bucket_idx| {
+    let precompute_start = Instant::now();
+    let precomputed_seeds_cache: Vec<_> = server_keys.iter()
+        .map(|key| dpf_bit_eval_full_optimized(key, hs_key, aes))
+        .collect();
+    let precompute_duration = precompute_start.elapsed();
+    println!("Server {} precomputation took: {:?}", server_id, precompute_duration);
+
+    // Preallocate the results vector
+    let mut collected_results = vec![[0i64; ENTRY_U64_SIZE]; num_buckets];
+
+    // Process buckets in parallel with mutable access
+    collected_results.par_iter_mut().enumerate().for_each(|(bucket_idx, bucket_result)| {
             let bucket_start_idx = bucket_idx * bucket_size;
-            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
-
-            // Initialize result vector local to this parallel task
-            let mut bucket_result: [i64; ENTRY_U64_SIZE]= [0i64; ENTRY_U64_SIZE]; 
-
-            // Precompute seeds for the current key
-            let precomputed_seeds = dpf_bit_eval_full_optimized(key, hs_key, aes);
+            let precomputed_seeds = &precomputed_seeds_cache[bucket_idx];
 
             // Inner loop over DB entries in the bucket
             for local_idx in 0..bucket_size {
@@ -984,18 +980,15 @@ pub fn dmpf_bit_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
                 let byte_idx = local_idx / 8;
                 let bit_idx = local_idx % 8;
                 let bit_eval = (precomputed_seeds[byte_idx] >> bit_idx) & 1;
+                let mask = 0u64.wrapping_sub(bit_eval as u64);
 
                 // Accumulate the result
                 for k in 0..ENTRY_U64_SIZE {
-                    bucket_result[k] ^= db_item_u64[k] & (0u64.wrapping_sub(bit_eval as u64)) as i64;
+                    bucket_result[k] ^= db_item_u64[k] & mask as i64;
                 }
 
             }
-
-            // Return the computed results (shares) for this bucket
-            bucket_result
-        })
-        .collect(); // Collect the Vec<i64> results from all parallel bucket tasks
+        }); 
 
     let duration = start.elapsed();
     println!(

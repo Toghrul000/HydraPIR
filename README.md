@@ -28,6 +28,42 @@ sudo apt install -y protobuf-compiler
 choco install protoc
 ```
 
+## Quick Start
+
+### Running Servers in Background
+
+You can start all servers for a scheme in the background with a single command:
+
+```bash
+# For regular or regular scheme (2 servers)
+cargo run --release --bin kpir server 127.0.0.1:50051 & cargo run --release --bin kpir server 127.0.0.1:50052 & wait
+
+# For private update scheme (4 servers)
+cargo run --release --bin kpir_priv_upt server 127.0.0.1:50051 & cargo run --release --bin kpir_priv_upt server 127.0.0.1:50052 & cargo run --release --bin kpir_priv_upt server 127.0.0.1:50053 & cargo run --release --bin kpir_priv_upt server 127.0.0.1:50054 & wait
+```
+
+Bit-optimized versions of one liner:
+
+```bash
+# For regular or regular scheme (2 servers)
+cargo run --release --bin kpir_bit_opt server 127.0.0.1:50051 & cargo run --release --bin kpir_bit_opt server 127.0.0.1:50052 & wait
+
+# For private update scheme (4 servers)
+cargo run --release --bin kpir_bit_opt_priv_upt server 127.0.0.1:50051 & cargo run --release --bin kpir_bit_opt_priv_upt server 127.0.0.1:50052 & cargo run --release --bin kpir_bit_opt_priv_upt server 127.0.0.1:50053 & cargo run --release --bin kpir_bit_opt_priv_upt server 127.0.0.1:50054 & wait
+```
+
+To manage background servers:
+```bash
+# List running servers
+jobs
+
+# Stop a specific server (replace %1 with the job number from jobs command)
+kill %1
+
+# Stop all servers
+kill $(jobs -p)
+```
+
 ## Basic Scheme (kpir)
 
 This scheme implements a PIR protocol with non-private updates. It requires 2 servers to operate.
@@ -243,60 +279,30 @@ This will run several benchmarks:
 - Individual Server Response Times: Measures response time for each server separately
 - Reconstruction Time: Measures the time to reconstruct the final result from server responses
 
-### Running Individual Benchmarks
+### Running Benchmarks
 
 IMPORTANT: Before running benchmark commands you need have started servers and intialized them with data (Since bench client connects to those), look above on how to do that.
 
-You can run specific benchmarks using the following commands:
+You can run benchmarks using the following commands:
 
 For the Regular PIR scheme:
-
 ```bash
-# Run all Regular PIR benchmarks
 cargo bench --bench pir_benchmarks
-
-# Run specific Regular PIR benchmarks
-cargo bench --bench pir_benchmarks -- DPF\ Key\ Generation
-cargo bench --bench pir_benchmarks -- Individual\ Server\ Response\ Times
-cargo bench --bench pir_benchmarks -- Reconstruction\ Time
 ```
 
 For the private update scheme:
-
 ```bash
-# Run all private update benchmarks
 cargo bench --bench pir_priv_upt_benchmarks
-
-# Run specific private update benchmarks
-cargo bench --bench pir_priv_upt_benchmarks -- DPF\ Key\ Generation\ \(Private\ Update\)
-cargo bench --bench pir_priv_upt_benchmarks -- Individual\ Server\ Response\ Times\ \(Private\ Update\)
-cargo bench --bench pir_priv_upt_benchmarks -- Private\ Update
-cargo bench --bench pir_priv_upt_benchmarks -- Reconstruction\ Time\ \(Private\ Update\)
 ```
 
 For the Bit-Optimized Regular PIR scheme:
-
 ```bash
-# Run all Bit-Optimized Regular PIR benchmarks
 cargo bench --bench bit_pir_benchmarks
-
-# Run specific Bit-Optimized Regular PIR benchmarks
-cargo bench --bench bit_pir_benchmarks -- DPF\ Key\ Generation
-cargo bench --bench bit_pir_benchmarks -- Individual\ Server\ Response\ Times
-cargo bench --bench bit_pir_benchmarks -- Reconstruction\ Time
 ```
 
 For the Bit-Optimized private update scheme:
-
 ```bash
-# Run all Bit-Optimized private update benchmarks
 cargo bench --bench bit_pir_priv_upt_benchmarks
-
-# Run specific Bit-Optimized private update benchmarks
-cargo bench --bench bit_pir_priv_upt_benchmarks -- DPF\ Key\ Generation\ \(Private\ Update\)
-cargo bench --bench bit_pir_priv_upt_benchmarks -- Individual\ Server\ Response\ Times\ \(Private\ Update\)
-cargo bench --bench bit_pir_priv_upt_benchmarks -- Private\ Update
-cargo bench --bench bit_pir_priv_upt_benchmarks -- Reconstruction\ Time\ \(Private\ Update\)
 ```
 
 Note: The benchmarks use localhost servers by default:
