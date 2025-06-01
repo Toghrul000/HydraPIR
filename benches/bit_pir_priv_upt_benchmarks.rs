@@ -1,11 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use kpir::ms_kpir::pir_service_private_update_client::PirServicePrivateUpdateClient;
-use kpir::ms_kpir::{dpf_key, BucketKeys, ClientSessionInitRequest, DpfKey, DpfKeyBytes, PrivUpdateRequest};
+use kpir::ms_kpir::bit_optimized_pir_service_private_update_client::BitOptimizedPirServicePrivateUpdateClient;
+use kpir::ms_kpir::{bit_dpf_key, BucketBitOptimizedKeys, ClientSessionInitRequest, BitDpfKey, DpfKeyBytes, PrivUpdateRequest};
 use kpir::ms_kpir::dpf_key_bytes;
 use cuckoo_lib::{get_hierarchical_indices, encode_entry, Entry};
-use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers, dpf_priv_update_gen_buckets};
+use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_gen, dmpf_bit_pir_reconstruct_servers, dpf_priv_xor_update_gen_buckets};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand::RngCore;
@@ -64,7 +64,7 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     };
     
     for &addr in server_addrs {
-        let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
+        let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
         
         let init_request = ClientSessionInitRequest {
             client_id: client_id.clone(),
@@ -133,11 +133,12 @@ async fn execute_pir_query(
         &(session.bucket_size as usize), 
         input_query_key);
 
-    let beta = 1;
-    let target_points: Vec<(u32, u32)> = global_indexes.iter().map(|x| (*x as u32, beta)).collect();
+    let target_points: Vec<u32> = global_indexes.iter()
+    .map(|x| *x as u32)
+    .collect();
     
     let aes = create_aes(&session.aes_key);
-    let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
+    let client_keys = dmpf_bit_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
     
     let mut server_futures = Vec::new();
 
@@ -145,25 +146,25 @@ async fn execute_pir_query(
         for (_, &addr) in addr_chunk.iter().enumerate() {
             let client_keys_for_group = &client_keys[group_index];
             let client_future = async move {
-                let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
+                let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
                 
                 let proto_bucket_keys = client_keys_for_group.clone().iter().map(|key| {
-                    let cwn = dpf_key::Cwn {
+                    let cwn = bit_dpf_key::Cwn {
                         hcw: key.cw_n.0.to_vec(),
                         lcw0: key.cw_n.1 as u32,
                         lcw1: key.cw_n.2 as u32,
                     };
         
-                    DpfKey {
+                    BitDpfKey {
                         n: key.n as u32,
                         seed: key.seed.to_vec(),
                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
                         cw_n: Some(cwn),
-                        cw_np1: key.cw_np1,
+                        cw_np1: key.cw_np1.to_vec(),
                     }
                 }).collect();
         
-                let request = tonic::Request::new(BucketKeys {
+                let request = tonic::Request::new(BucketBitOptimizedKeys {
                     client_id: session.client_id.clone(),
                     server_id: group_index as u32,
                     bucket_key: proto_bucket_keys,
@@ -194,7 +195,7 @@ async fn execute_pir_query(
         }).collect()
     }).collect();
 
-    let final_slots = dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
+    let final_slots = dmpf_bit_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
         &all_server_results,
         session.num_buckets as usize,
     );
@@ -236,14 +237,14 @@ async fn execute_private_update(
 
     let mut beta: Entry<ENTRY_U64_COUNT> = [0u64; ENTRY_U64_COUNT];
     for i in 0..ENTRY_U64_COUNT {
-        beta[i] = new_value[i].wrapping_sub(old_entry[i]);
+        beta[i] = new_value[i] ^ old_entry[i];
     }
 
     let aes = create_aes(&session.aes_key);
     let target_points = vec![(global_idx as u32, beta)];
 
     // Generate DPF keys for the update
-    let update_keys = dpf_priv_update_gen_buckets::<ENTRY_U64_COUNT>(
+    let update_keys = dpf_priv_xor_update_gen_buckets::<ENTRY_U64_COUNT>(
         &target_points,
         session.num_buckets as usize,
         session.bucket_size as usize,
@@ -265,7 +266,7 @@ async fn execute_private_update(
             let update_keys_1 = Arc::clone(&update_key_1);
             
             let client_future = async move {
-                let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
+                let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
                 let update_keys = if server_index == 0 {
                     (*update_keys_0).clone()
                 } else {
@@ -336,13 +337,12 @@ fn bench_dpf_key_generation(c: &mut Criterion) {
                     query_key
                 );
                 
-                let beta = 1;
-                let target_points: Vec<(u32, u32)> = global_indexes.iter()
-                    .map(|x| (*x as u32, beta))
-                    .collect();
+                let target_points: Vec<u32> = global_indexes.iter()
+                .map(|x| *x as u32)
+                .collect();
                 
                 let aes = create_aes(&session.aes_key);
-                black_box(dmpf_pir_query_gen(
+                black_box(dmpf_bit_pir_query_gen(
                     &target_points,
                     session.num_buckets as usize,
                     session.bucket_size as usize,
@@ -399,7 +399,7 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
                 group.bench_with_input(BenchmarkId::new(bench_id, key), key, |b, query_key| {
                     b.iter(|| {
                         rt.block_on(async {
-                            let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
+                            let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
                             
                             let global_indexes = get_hierarchical_indices(
                                 &session.bucket_selection_key,
@@ -410,13 +410,12 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
                                 query_key
                             );
                             
-                            let beta = 1;
-                            let target_points: Vec<(u32, u32)> = global_indexes.iter()
-                                .map(|x| (*x as u32, beta))
-                                .collect();
+                            let target_points: Vec<u32> = global_indexes.iter()
+                            .map(|x| *x as u32)
+                            .collect();
                             
                             let aes = create_aes(&session.aes_key);
-                            let client_keys = dmpf_pir_query_gen(
+                            let client_keys = dmpf_bit_pir_query_gen(
                                 &target_points,
                                 session.num_buckets as usize,
                                 session.bucket_size as usize,
@@ -427,22 +426,22 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
                             
                             let client_keys_for_server = &client_keys[group_idx];
                             let proto_bucket_keys = client_keys_for_server.iter().map(|key| {
-                                let cwn = dpf_key::Cwn {
+                                let cwn = bit_dpf_key::Cwn {
                                     hcw: key.cw_n.0.to_vec(),
                                     lcw0: key.cw_n.1 as u32,
                                     lcw1: key.cw_n.2 as u32,
                                 };
                                 
-                                DpfKey {
+                                BitDpfKey {
                                     n: key.n as u32,
                                     seed: key.seed.to_vec(),
                                     cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
                                     cw_n: Some(cwn),
-                                    cw_np1: key.cw_np1,
+                                    cw_np1: key.cw_np1.to_vec(),
                                 }
                             }).collect();
 
-                            let request = tonic::Request::new(BucketKeys {
+                            let request = tonic::Request::new(BucketBitOptimizedKeys {
                                 client_id: session.client_id.clone(),
                                 server_id: group_idx as u32,
                                 bucket_key: proto_bucket_keys,
@@ -457,7 +456,6 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
     }
     group.finish();
 }
-
 
 fn bench_individual_server_private_update(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
@@ -483,14 +481,14 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
                                 
                                 let mut beta: Entry<ENTRY_U64_COUNT> = [0u64; ENTRY_U64_COUNT];
                                 for i in 0..ENTRY_U64_COUNT {
-                                    beta[i] = new_value[i].wrapping_sub(old_entry[i]);
+                                    beta[i] = new_value[i] ^ old_entry[i];
                                 }
                                 
                                 let aes = create_aes(&session.aes_key);
                                 let target_points = vec![(global_idx as u32, beta)];
 
                                 // Generate DPF keys for the update
-                                let update_keys = dpf_priv_update_gen_buckets::<ENTRY_U64_COUNT>(
+                                let update_keys = dpf_priv_xor_update_gen_buckets::<ENTRY_U64_COUNT>(
                                     &target_points,
                                     session.num_buckets as usize,
                                     session.bucket_size as usize,
@@ -505,7 +503,7 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
                                     update_keys[1].clone()
                                 };
 
-                                let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
+                                let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
                                 
                                 let update_keys_proto = update_keys_for_server.iter().map(|key| {
                                     let cwn = dpf_key_bytes::Cwn {
@@ -542,7 +540,6 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
     }
     group.finish();
 }
-
 
 fn bench_private_update(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
@@ -595,7 +592,7 @@ fn bench_reconstruction(c: &mut Criterion) {
             let mut results = Vec::new();
             for (group_idx, addr_chunk) in DEFAULT_SERVERS.chunks(2).enumerate() {
                 for (_, &addr) in addr_chunk.iter().enumerate() {
-                    let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
+                    let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
                     
                     let global_indexes = get_hierarchical_indices(
                         &session.bucket_selection_key,
@@ -606,13 +603,12 @@ fn bench_reconstruction(c: &mut Criterion) {
                         key
                     );
                     
-                    let beta = 1;
-                    let target_points: Vec<(u32, u32)> = global_indexes.iter()
-                        .map(|x| (*x as u32, beta))
-                        .collect();
+                    let target_points: Vec<u32> = global_indexes.iter()
+                    .map(|x| *x as u32)
+                    .collect();
                     
                     let aes = create_aes(&session.aes_key);
-                    let client_keys = dmpf_pir_query_gen(
+                    let client_keys = dmpf_bit_pir_query_gen(
                         &target_points,
                         session.num_buckets as usize,
                         session.bucket_size as usize,
@@ -623,22 +619,22 @@ fn bench_reconstruction(c: &mut Criterion) {
                     
                     let client_keys_for_server = &client_keys[group_idx];
                     let proto_bucket_keys = client_keys_for_server.iter().map(|key| {
-                        let cwn = dpf_key::Cwn {
+                        let cwn = bit_dpf_key::Cwn {
                             hcw: key.cw_n.0.to_vec(),
                             lcw0: key.cw_n.1 as u32,
                             lcw1: key.cw_n.2 as u32,
                         };
                         
-                        DpfKey {
+                        BitDpfKey {
                             n: key.n as u32,
                             seed: key.seed.to_vec(),
                             cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
                             cw_n: Some(cwn),
-                            cw_np1: key.cw_np1,
+                            cw_np1: key.cw_np1.to_vec(),
                         }
                     }).collect();
 
-                    let request = tonic::Request::new(BucketKeys {
+                    let request = tonic::Request::new(BucketBitOptimizedKeys {
                         client_id: session.client_id.clone(),
                         server_id: group_idx as u32,
                         bucket_key: proto_bucket_keys,
@@ -666,7 +662,7 @@ fn bench_reconstruction(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("reconstruction", key), key, |b, _| {
             b.iter(|| {
-                black_box(dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
+                black_box(dmpf_bit_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
                     &all_server_results,
                     session.num_buckets as usize,
                 ));

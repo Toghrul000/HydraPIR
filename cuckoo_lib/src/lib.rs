@@ -1189,8 +1189,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 current_key.hash(&mut hasher); // Hash current key
                 displacement_count.hash(&mut hasher); // Hash displacement count for variance
                 choice_idx_to_evict = hasher.finish() as usize % potential_indices.len();
-
-
             } else {
                 choice_idx_to_evict = {
                     let mut rng = self.rng.lock().unwrap();

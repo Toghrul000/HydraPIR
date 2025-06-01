@@ -81,8 +81,8 @@ pub async fn run_admin_client(
     let response = response.into_inner();
     println!("Client: Server acknowledgement: {:?}", response);
 
-    if response.success {
-        // If CSV streaming was successful, send other server addresses to first server
+    // If CSV streaming was successful and there are other servers to sync with
+    if response.success && server_addresses.len() > 1 {
         let server_sync = ServerSync {
             server_addresses: server_addresses[1..].to_vec(),
         };

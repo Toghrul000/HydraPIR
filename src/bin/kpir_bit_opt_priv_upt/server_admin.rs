@@ -1,12 +1,10 @@
 use std::error::Error;
-use rand::Rng;
 use tonic::Request;
 use async_stream::stream;
 use crate::ms_kpir::{
-    pir_service_client::PirServiceClient,
+    bit_optimized_pir_service_private_update_client::BitOptimizedPirServicePrivateUpdateClient,
     CsvRow,
     ServerSync,
-    UpdateSingleEntryRequest,
 };
 
 pub async fn run_admin_client(
@@ -25,7 +23,7 @@ pub async fn run_admin_client(
 
     // Connect to first server
     let first_server_addr = &server_addresses[0];
-    let mut client = PirServiceClient::connect(format!("http://{}", first_server_addr)).await?;
+    let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", first_server_addr)).await?;
     println!("Connected to server at {}", first_server_addr);
 
     // Open and read CSV file
@@ -85,7 +83,6 @@ pub async fn run_admin_client(
 
     // If CSV streaming was successful and there are other servers to sync with
     if response.success && server_addresses.len() > 1 {
-        println!("Sending second server address for sync");
         let server_sync = ServerSync {
             server_addresses: server_addresses[1..].to_vec(),
         };
@@ -98,45 +95,4 @@ pub async fn run_admin_client(
     Ok(())
 }
 
-pub async fn update_servers(
-    key: String,
-    value: String,
-    server_addresses: &[String],
-) -> Result<(), Box<dyn Error>> {
-    println!("\n--- Updating servers with key: {} ---", key);
 
-    // First check if we have any server addresses
-    if server_addresses.is_empty() {
-        return Err(Box::<dyn Error>::from("No server addresses provided"));
-    }
-
-    // Connect to first server
-    let seed: [u8; 16] = rand::rng().random();
-    for server_addr in server_addresses{
-        let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
-        println!("Connected to server at {}", server_addr);
-    
-        // Create the CsvRow for the single key-value pair
-        let csv_row = CsvRow {
-            key: key.clone(),
-            value: value.clone(),
-        };
-        
-        // Create the UpdateSingleEntryRequest
-        let update_request = UpdateSingleEntryRequest {
-            csv_row: Some(csv_row),
-            deterministic_eviction_seed: seed.to_vec(),
-        };
-    
-        // Send the update request to the first server
-        println!("Sending update request to server at {}", server_addr);
-        let response = client.update_single_entry(Request::new(update_request)).await?;
-        let response = response.into_inner();
-        
-        println!("Server response: {}", response.message);
-
-    }
-
-    
-    Ok(())
-}

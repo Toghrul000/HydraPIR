@@ -24,7 +24,7 @@ message SyncResponse {
 message ClientSessionInitRequest {
   string client_id = 1;
   bytes aes_key = 2;
-  bytes hash_key = 3;
+  bytes hs_key = 3;
 }
 
 // Message for client session initialization response
@@ -87,7 +87,33 @@ message DPFKey {
   int64 cw_np1 = 5; // CW_{n+1}
 }
 
-message DPFKey_Bytes {
+message BitDPFKey {
+  uint32 n = 1;
+
+  // Fixed-size byte arrays represented as bytes
+  bytes seed = 2; // length should be AES_BLOCK_SIZE (16 bytes)
+
+  repeated bytes cw_levels = 3; // Each element is AES_BLOCK_SIZE bytes
+
+  // CW_n is a tuple: ([u8; AES_BLOCK_SIZE - 1], u8, u8)
+  message CWN {
+    bytes hcw = 1; // AES_BLOCK_SIZE - 1 bytes
+    uint32 lcw0 = 2; // use uint32 for u8
+    uint32 lcw1 = 3;
+  }
+  CWN cw_n = 4;
+
+  bytes cw_np1 = 5; // CW_{n+1}
+}
+
+message BucketBitOptimizedKeys {
+  string client_id = 1;
+  uint32 server_id = 2;
+  repeated BitDPFKey bucket_key = 3;
+}
+
+
+message DPFKeyBytes {
   uint32 n = 1;
 
   // Fixed-size byte arrays represented as bytes
@@ -115,14 +141,8 @@ message BucketKeys {
 message PrivUpdateRequest {
   string client_id = 1;
   uint32 server_id = 2;
-  DPFKey_Bytes update_key = 3;
+  repeated DPFKeyBytes update_keys = 3;
 }
-
-// message BucketKeysAdditive {
-//   string client_id = 1;
-//   uint32 server_id = 2;
-//   repeated DPFKey_Bytes bucket_key = 3;
-// }
 
 message BucketEvalResult {
   repeated int64 value = 1;
@@ -172,9 +192,9 @@ service PIRService {
 
   // Cleanup client session
   rpc CleanupClientSession(ClientCleanupRequest) returns (SyncResponse);
-
-
 }
+
+
 
 service PIRServicePrivateUpdate {
   
@@ -190,6 +210,62 @@ service PIRServicePrivateUpdate {
 
   // RPC method where the server receives a PIR Query and returns an Answer.
   rpc PirQuery(BucketKeys) returns (ServerResponse);
+
+  // Services to send whole cuckoo table details to other servers
+  rpc StreamByteShareArrays(stream ByteShareArrayEntry) returns (SyncResponse);
+  rpc SendConfiguration(ConfigData) returns (SyncResponse);
+
+  rpc PrivateUpdate(PrivUpdateRequest) returns (SyncResponse);
+
+  // Cleanup client session
+  rpc CleanupClientSession(ClientCleanupRequest) returns (SyncResponse);
+}
+
+
+service BitOptimizedPIRService {
+  // Stream CSV data to server
+  rpc StreamCsvData(stream CsvRow) returns (SyncResponse);
+  
+  // Send server addresses to first server
+  rpc SendServerAddresses(ServerSync) returns (SyncResponse);
+
+  // Services to send whole cuckoo table details to other servers
+  rpc StreamByteArrays(stream ByteArrayEntry) returns (SyncResponse);
+  rpc SendConfiguration(ConfigData) returns (SyncResponse);
+
+  rpc SendCuckooKeys(CuckooKeys) returns (SyncResponse);
+
+  // Update a single entry in the Cuckoo hash table
+  rpc UpdateSingleEntry(UpdateSingleEntryRequest) returns (SyncResponse);
+  
+  // Client session initialization
+  rpc InitClientSession(ClientSessionInitRequest) returns (ClientSessionInitResponse);
+
+
+  // RPC method where the server receives a PIR Query and returns an Answer.
+  rpc PirQuery(BucketBitOptimizedKeys) returns (ServerResponse);
+
+  // Cleanup client session
+  rpc CleanupClientSession(ClientCleanupRequest) returns (SyncResponse);
+
+}
+
+
+
+service BitOptimizedPIRServicePrivateUpdate {
+  
+  // Stream CSV data to server
+  rpc StreamCsvData(stream CsvRow) returns (SyncResponse);
+  
+  // Send server addresses to first server
+  rpc SendServerAddresses(ServerSync) returns (SyncResponse);
+
+  // Client session initialization
+  rpc InitClientSession(ClientSessionInitRequest) returns (ClientSessionInitResponse);
+
+
+  // RPC method where the server receives a PIR Query and returns an Answer.
+  rpc PirQuery(BucketBitOptimizedKeys) returns (ServerResponse);
 
   // Services to send whole cuckoo table details to other servers
   rpc StreamByteShareArrays(stream ByteShareArrayEntry) returns (SyncResponse);

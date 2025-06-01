@@ -1,8 +1,8 @@
-use crate::ms_kpir::pir_service_client::PirServiceClient;
-use crate::ms_kpir::{ClientSessionInitRequest, BucketKeys, DpfKey, CuckooKeys};
-use crate::ms_kpir::dpf_key;
+use crate::ms_kpir::bit_optimized_pir_service_client::BitOptimizedPirServiceClient;
+use crate::ms_kpir::{BitDpfKey, BucketBitOptimizedKeys, ClientSessionInitRequest, CuckooKeys};
+use crate::ms_kpir::bit_dpf_key;
 use cuckoo_lib::get_hierarchical_indices;
-use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers};
+use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_gen, dmpf_bit_pir_reconstruct_servers};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand::RngCore;
@@ -60,7 +60,7 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     let mut first_server_keys: Option<(Vec<Vec<u8>>, Vec<u8>)> = None;
     
     for (i, &addr) in server_addrs.iter().enumerate() {
-        let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+        let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", addr)).await?;
         
         let init_request = ClientSessionInitRequest {
             client_id: client_id.clone(),
@@ -149,13 +149,12 @@ pub async fn execute_pir_query_and_display_results(
         &(session.bucket_size as usize), 
         input_query_key);
 
-    let beta = 1;
-    let target_points: Vec<(u32, u32)> = global_indexes.iter().map(|x| (*x as u32, beta)).collect();
+    let target_points: Vec<u32> = global_indexes.iter().map(|x| *x as u32).collect();
     
     // Get AES instance - needed for the DPF
     let aes = create_aes(&session.aes_key);
 
-    let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
+    let client_keys = dmpf_bit_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
     
     let mut server_futures = Vec::new();
 
@@ -163,29 +162,29 @@ pub async fn execute_pir_query_and_display_results(
         let client_keys_for_server = &client_keys[i];
         let client_future = async move {
 
-            let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+            let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", addr)).await?;
             
             // Convert Rust DPFKey to protobuf DPFKey
             let proto_bucket_keys = client_keys_for_server.clone().iter().map(|key| {
                 // Try with just the struct name, let Rust use the import correctly
-                let cwn = dpf_key::Cwn {
+                let cwn = bit_dpf_key::Cwn {
                     hcw: key.cw_n.0.to_vec(),
                     lcw0: key.cw_n.1 as u32,
                     lcw1: key.cw_n.2 as u32,
                 };
                 
                 // Create the DPFKey
-                DpfKey {
+                BitDpfKey {
                     n: key.n as u32,
                     seed: key.seed.to_vec(),
                     cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
                     cw_n: Some(cwn),
-                    cw_np1: key.cw_np1,
+                    cw_np1: key.cw_np1.to_vec(),
                 }
             }).collect();
 
             // Create BucketKeys request
-            let request = tonic::Request::new(BucketKeys {
+            let request = tonic::Request::new(BucketBitOptimizedKeys {
                 client_id: session.client_id.clone(),
                 server_id: i as u32,
                 bucket_key: proto_bucket_keys,
@@ -225,7 +224,7 @@ pub async fn execute_pir_query_and_display_results(
     }).collect();
 
     // Run reconstruction
-    let final_slots = dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
+    let final_slots = dmpf_bit_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
         &all_server_results,
         session.num_buckets as usize,
     );
@@ -279,7 +278,7 @@ pub async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&st
     println!("Cleaning up client session...");
     
     for &addr in server_addrs {
-        let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+        let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", addr)).await?;
         
         let cleanup_request = crate::ms_kpir::ClientCleanupRequest {
             client_id: session.client_id.clone(),

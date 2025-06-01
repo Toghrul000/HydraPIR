@@ -52,12 +52,11 @@ def calculate_required_table_size(total_storage_bytes: int, entry_size_bytes: in
 # we need at least 256 MB for 2^20 * 256 B entries   
 print(calculate_required_table_size(256*1024*1024, 256)) # 2^20 * 256 B entries
 
-# we need at least 3750 MB for 2^17 * 30kB entries
-print(calculate_required_table_size(3750*1024*1024, 30000)) # 2^17 * 30kB entries
+# we need at least 3840 MB for 2^17 * 30kB entries
+print(calculate_required_table_size(3840*1024*1024, 30720)) # 2^17 * 30kB entries
 
 # we need at least around 1,562.5 MB so 2 GB is also good for 2^14 * 100kB entries  
 print(calculate_required_table_size(2 * 1024 * 1024 * 1024, 100000)) # 2^14 * 100kB entries  
-
 
 
 

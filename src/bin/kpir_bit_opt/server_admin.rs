@@ -3,7 +3,7 @@ use rand::Rng;
 use tonic::Request;
 use async_stream::stream;
 use crate::ms_kpir::{
-    pir_service_client::PirServiceClient,
+    bit_optimized_pir_service_client::BitOptimizedPirServiceClient,
     CsvRow,
     ServerSync,
     UpdateSingleEntryRequest,
@@ -25,7 +25,7 @@ pub async fn run_admin_client(
 
     // Connect to first server
     let first_server_addr = &server_addresses[0];
-    let mut client = PirServiceClient::connect(format!("http://{}", first_server_addr)).await?;
+    let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", first_server_addr)).await?;
     println!("Connected to server at {}", first_server_addr);
 
     // Open and read CSV file
@@ -113,7 +113,7 @@ pub async fn update_servers(
     // Connect to first server
     let seed: [u8; 16] = rand::rng().random();
     for server_addr in server_addresses{
-        let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
+        let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
     
         // Create the CsvRow for the single key-value pair

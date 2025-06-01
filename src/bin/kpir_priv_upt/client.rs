@@ -2,7 +2,7 @@ use crate::ms_kpir::pir_service_private_update_client::PirServicePrivateUpdateCl
 use crate::ms_kpir::{dpf_key_bytes, BucketKeys, ClientSessionInitRequest, DpfKey, DpfKeyBytes, PrivUpdateRequest};
 use crate::ms_kpir::dpf_key;
 use cuckoo_lib::{encode_entry, get_hierarchical_indices, Entry};
-use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers, dpf_gen_bytes};
+use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers, dpf_priv_update_gen_buckets};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand::RngCore;
@@ -22,7 +22,7 @@ use kpir::config::ENTRY_U64_COUNT;
 pub struct ClientSession {
     pub client_id: String,
     pub aes_key: [u8; 16],
-    pub hash_key: [u8; 16],
+    pub hs_key: [u8; 16],
     pub num_buckets: u32,
     pub bucket_size: u32,
     pub bucket_bits: u32,
@@ -49,7 +49,7 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     let mut session = ClientSession {
         client_id: client_id.clone(),
         aes_key: aes_key_bytes,
-        hash_key,
+        hs_key: hash_key,
         num_buckets: 0,
         bucket_size: 0,
         bucket_bits: 0,
@@ -67,7 +67,7 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
         let init_request = ClientSessionInitRequest {
             client_id: client_id.clone(),
             aes_key: aes_key_bytes.to_vec(),
-            hash_key: hash_key.to_vec(),
+            hs_key: hash_key.to_vec(),
         };
         
         let response = client.init_client_session(tonic::Request::new(init_request)).await?;
@@ -127,7 +127,7 @@ async fn execute_pir_query_and_display_results(
     // Get AES instance - needed for the DPF
     let aes = create_aes(&session.aes_key);
 
-    let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hash_key, &aes);
+    let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
     
     let mut server_futures = Vec::new();
 
@@ -259,46 +259,58 @@ async fn execute_private_update(
 
     let aes = create_aes(&session.aes_key);
 
-    let (key0, key1) = dpf_gen_bytes::<ENTRY_U64_COUNT>(global_idx as u32, beta, session.n_bits as usize, &session.hash_key, &aes);
+    let target_points = vec![(global_idx as u32, beta)];
+
+    // Generate DPF keys for the update
+    let update_keys = dpf_priv_update_gen_buckets::<ENTRY_U64_COUNT>(
+        &target_points,
+        session.num_buckets as usize,
+        session.bucket_size as usize,
+        session.bucket_bits,
+        &session.hs_key,
+        &aes,
+    );
 
     // Wrap the keys in Arc for shared ownership
-    let key0 = Arc::new(key0);
-    let key1 = Arc::new(key1);
+    let update_key_0 = Arc::new(update_keys[0].clone());
+    let update_key_1 = Arc::new(update_keys[1].clone());
 
     let mut server_futures = Vec::new();
 
     for (_group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
         for (server_index, &addr) in addr_chunk.iter().enumerate() {
             // Clone the Arc (cheap operation)
-            let key0 = Arc::clone(&key0);
-            let key1 = Arc::clone(&key1);
+            let update_keys_0 = Arc::clone(&update_key_0);
+            let update_keys_1 = Arc::clone(&update_key_1);
             
             let client_future = async move {
                 let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
-                let key = if server_index == 0 {
-                    (*key0).clone()
+                let update_keys = if server_index == 0 {
+                    (*update_keys_0).clone()
                 } else {
-                    (*key1).clone()
+                    (*update_keys_1).clone()
                 };
 
-                let cwn = dpf_key_bytes::Cwn {
-                    hcw: key.cw_n.0.to_vec(),
-                    lcw0: key.cw_n.1 as u32,
-                    lcw1: key.cw_n.2 as u32,
-                };
+                let update_keys_proto = update_keys.iter().map(|key| {
+                    let cwn = dpf_key_bytes::Cwn {
+                        hcw: key.cw_n.0.to_vec(),
+                        lcw0: key.cw_n.1 as u32,
+                        lcw1: key.cw_n.2 as u32,
+                    };
 
-                let proto_key = DpfKeyBytes {
-                    n: key.n as u32,
-                    seed: key.seed.to_vec(),
-                    cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
-                    cw_n: Some(cwn),
-                    cw_np1: key.cw_np1.to_vec(),
-                };
+                    DpfKeyBytes {
+                        n: key.n as u32,
+                        seed: key.seed.to_vec(),
+                        cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
+                        cw_n: Some(cwn),
+                        cw_np1: key.cw_np1.to_vec(),
+                    }
+                }).collect();
 
                 let request = tonic::Request::new(PrivUpdateRequest {
                     client_id: session.client_id.clone(),
                     server_id: server_index as u32,
-                    update_key: Some(proto_key),
+                    update_keys: update_keys_proto,
                 });
 
                 let response = client.private_update(request).await?;

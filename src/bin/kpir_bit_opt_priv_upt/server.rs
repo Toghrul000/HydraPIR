@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use dpf_half_tree_lib::{calculate_pir_config, dmpf_pir_query_eval_additive, dpf_priv_update_additive_buckets, DPFKeyBytes};
+use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_eval_additive, dpf_priv_xor_update_additive_buckets, BitDPFKey, DPFKeyBytes};
+use dpf_half_tree_lib::calculate_pir_config;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use tokio::sync::{mpsc, Mutex};
@@ -16,9 +17,9 @@ use crate::ms_kpir::PrivUpdateRequest;
 use crate::ms_kpir::{
     CsvRow, ServerSync, SyncResponse, ByteShareArrayEntry, ConfigData,
     ClientSessionInitRequest, ClientSessionInitResponse,
-    BucketKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest,
-    pir_service_private_update_server::PirServicePrivateUpdate,
-    pir_service_private_update_client::PirServicePrivateUpdateClient,
+    BucketBitOptimizedKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest,
+    bit_optimized_pir_service_private_update_server::BitOptimizedPirServicePrivateUpdate,
+    bit_optimized_pir_service_private_update_client::BitOptimizedPirServicePrivateUpdateClient,
 };
 
 // Client session data
@@ -71,7 +72,7 @@ fn spawn_share_streaming_task(
             target_server_name, server_addr_str
         );
 
-        let mut grpc_client = match PirServicePrivateUpdateClient::connect(format!("http://{}", server_addr_str)).await {
+        let mut grpc_client = match BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", server_addr_str)).await {
             Ok(c) => c,
             Err(e) => {
                 let err_msg = format!(
@@ -148,8 +149,8 @@ fn spawn_share_streaming_task(
 
 
 pub type EntryI64<const N: usize> = [i64; N];
-// Creates two additive shares from an i64 array.
-fn create_i64_additive_shares<const N: usize>(
+// Creates two XOR additive shares from an i64 array.
+fn create_i64_xor_additive_shares<const N: usize>(
     original_values: &EntryI64<N>,
     rng: &mut impl RngCore,
 ) -> (EntryI64<N>, EntryI64<N>) {
@@ -157,7 +158,7 @@ fn create_i64_additive_shares<const N: usize>(
     let mut share2 = [0i64; N];
     for i in 0..N {
         share1[i] = rng.next_u64() as i64; // Generate a pseudo-random i64
-        share2[i] = original_values[i].wrapping_sub(share1[i]);
+        share2[i] = original_values[i] ^ share1[i]; // XOR operation instead of subtraction
     }
     (share1, share2)
 }
@@ -201,10 +202,10 @@ impl Default for MyPIRService {
 }
 
 #[tonic::async_trait]
-impl PirServicePrivateUpdate for MyPIRService {
+impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
     async fn pir_query(
         &self,
-        request: Request<BucketKeys>,
+        request: Request<BucketBitOptimizedKeys>,
     ) -> Result<Response<ServerResponse>, Status> {
         let query = request.into_inner();
         let client_id = query.client_id;
@@ -255,17 +256,17 @@ impl PirServicePrivateUpdate for MyPIRService {
             
             let cw_n = (hcw, cw_n_proto.lcw0 as u8, cw_n_proto.lcw1 as u8);
             
-            Ok::<_, Status>(dpf_half_tree_lib::DPFKey {
+            Ok::<_, Status>(BitDPFKey {
                 n: proto_key.n as usize,
                 seed,
                 cw_levels,
                 cw_n,
-                cw_np1: proto_key.cw_np1,
+                cw_np1: proto_key.cw_np1.try_into().unwrap(),
             })
         }).collect::<Result<Vec<_>, _>>()?;
         
         // Evaluate the query - using references to table and other data
-        let results = dmpf_pir_query_eval_additive::<ENTRY_U64_COUNT>(
+        let results = dmpf_bit_pir_query_eval_additive::<ENTRY_U64_COUNT>(
             server_id,
             &dpf_keys,
             &cuckoo_table.table,  
@@ -354,7 +355,7 @@ impl PirServicePrivateUpdate for MyPIRService {
         // Get mutable access to the table and evaluate the DPF key directly
         let mut cuckoo_table = self.cuckoo_table.lock().await;
         let bucket_size = self.bucket_size.lock().await;
-        dpf_priv_update_additive_buckets::<ENTRY_U64_COUNT>(
+        dpf_priv_xor_update_additive_buckets::<ENTRY_U64_COUNT>(
             server_id as u8,
             &update_dpf_keys,
             &mut cuckoo_table.table,
@@ -588,14 +589,14 @@ impl PirServicePrivateUpdate for MyPIRService {
 
                     // Shares for S1 (local) and S2
                     let (s1_share_a, s2_share_a) =
-                        create_i64_additive_shares::<ENTRY_U64_COUNT>(
+                        create_i64_xor_additive_shares::<ENTRY_U64_COUNT>(
                             &original_entry_as_i64,
                             &mut rng,
                         );
 
                     // Shares for S3 and S4 (from the same original entry)
                     let (s3_share_b, s4_share_b) =
-                        create_i64_additive_shares::<ENTRY_U64_COUNT>(
+                        create_i64_xor_additive_shares::<ENTRY_U64_COUNT>(
                             &original_entry_as_i64,
                             &mut rng,
                         );

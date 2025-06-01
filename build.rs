@@ -26,18 +26,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_mb = env::var("KPIR_STORAGE_MB").unwrap_or_else(|_| "256".to_string());
     let entry_size_bytes = env::var("KPIR_ENTRY_SIZE_BYTES").unwrap_or_else(|_| "256".to_string());
     let max_rehash_attempts = env::var("KPIR_MAX_REHASH_ATTEMPTS").unwrap_or_else(|_| "1".to_string());
+    let bucket_num_option = env::var("BUCKET_NUM_OPTION").unwrap_or_else(|_| "1".to_string());
 
     // Calculate a hash of the environment variables to use in the filename
     let mut hasher = DefaultHasher::new();
     storage_mb.hash(&mut hasher);
     entry_size_bytes.hash(&mut hasher);
     max_rehash_attempts.hash(&mut hasher);
+    bucket_num_option.hash(&mut hasher);
     let config_hash = hasher.finish();
 
     // Calculate derived values
     let storage_mb: u64 = storage_mb.parse().expect("KPIR_STORAGE_MB must be a valid number");
     let entry_size_bytes: usize = entry_size_bytes.parse().expect("KPIR_ENTRY_SIZE_BYTES must be a valid number");
     let max_rehash_attempts: usize = max_rehash_attempts.parse().expect("KPIR_MAX_REHASH_ATTEMPTS must be a valid number");
+    let bucket_num_option: usize = bucket_num_option.parse().expect("BUCKET_NUM_OPTION must be a valid number");
     
     let total_storage_bytes = storage_mb * 1024 * 1024;
     let entry_u64_count = entry_size_bytes / 8;
@@ -59,6 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(f, "pub const DESIRED_ENTRY_SIZE_BYTES: usize = {};", entry_size_bytes)?;
         writeln!(f, "pub const ENTRY_U64_COUNT: usize = {};", entry_u64_count)?;
         writeln!(f, "pub const MAX_REHASH_ATTEMPTS_PER_CONFIG: usize = {};", max_rehash_attempts)?;
+        writeln!(f, "pub const BUCKET_NUM_OPTION: usize = {};", bucket_num_option)?;
     }
 
     // Create a symlink to the latest config file

@@ -120,12 +120,6 @@ pub fn convert_g_bytes<const M: usize>(
 }
 
 
-// fn get_bit(n: u32, pos: u32, bit_size: u32) -> u8 {
-//     assert!(pos < bit_size);
-//     let shifted = n << (32 - bit_size);
-//     ((shifted >> (31 - pos)) & 1) as u8
-// }
-
 pub fn get_bit(n: u32, pos: u32, bit_size: u32) -> u8 {
     assert!(pos < bit_size);
     ((n >> (bit_size - 1 - pos)) & 1) as u8
@@ -151,7 +145,7 @@ pub fn share_delta(delta: &[u8; AES_BLOCK_SIZE]) -> ([u8; AES_BLOCK_SIZE], [u8; 
     (share0, share1)
 }
 
-// Helper for XORing byte arrays
+// Helper for XORing byte arrays (most likely optimization happens automatically since i didnt notice difference, thus no manual SIMD needed)
 #[inline(always)]
 pub fn xor_bytes(a: &mut [u8; AES_BLOCK_SIZE], b: &[u8; AES_BLOCK_SIZE]) {
     // #[cfg(target_arch = "x86_64")]
@@ -167,7 +161,7 @@ pub fn xor_bytes(a: &mut [u8; AES_BLOCK_SIZE], b: &[u8; AES_BLOCK_SIZE]) {
     //         }
     //     }
     // }
-
+    // Fallback to scalar implementation
     for i in 0..AES_BLOCK_SIZE {
         a[i] ^= b[i];
     }
@@ -185,7 +179,7 @@ pub struct DPFKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Struct for a DPF key share
-pub struct DPFKey_Bytes<const ENTRY_U64_SIZE: usize> {
+pub struct DPFKeyBytes<const ENTRY_U64_SIZE: usize> {
     pub n: usize,
     pub seed: [u8; AES_BLOCK_SIZE], // (s_0 || t_0)
     pub cw_levels: Vec<[u8; AES_BLOCK_SIZE]>, // CW_1..CW_{n-1}
@@ -368,14 +362,14 @@ pub fn dpf_gen(
         DPFKey {
             n,
             seed: s0_initial,
-            cw_levels: cw_levels.clone(), // Clone here
+            cw_levels: cw_levels.clone(), 
             cw_n: (hcw, lcw0, lcw1),
             cw_np1,
         },
         DPFKey {
             n,
             seed: s1_initial,
-            cw_levels, // Move original vector here
+            cw_levels, 
             cw_n: (hcw, lcw0, lcw1),
             cw_np1,
         },
@@ -390,7 +384,7 @@ pub fn dpf_gen_bytes<const ENTRY_U64_SIZE: usize>(
     n: usize,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128,
-) -> (DPFKey_Bytes<ENTRY_U64_SIZE>, DPFKey_Bytes<ENTRY_U64_SIZE>) {
+) -> (DPFKeyBytes<ENTRY_U64_SIZE>, DPFKeyBytes<ENTRY_U64_SIZE>) {
     // 1) sample Δ with LSB=1 and share
     let delta = sample_delta(); 
     let (s0_initial, s1_initial) = share_delta(&delta); 
@@ -557,14 +551,14 @@ pub fn dpf_gen_bytes<const ENTRY_U64_SIZE: usize>(
 
 
     (
-        DPFKey_Bytes {
+        DPFKeyBytes {
             n,
             seed: s0_initial,
             cw_levels: cw_levels.clone(), // Clone here
             cw_n: (hcw, lcw0, lcw1),
             cw_np1,
         },
-        DPFKey_Bytes {
+        DPFKeyBytes {
             n,
             seed: s1_initial,
             cw_levels, // Move original vector here
@@ -662,9 +656,113 @@ pub fn dpf_eval(
 }
 
 
+pub fn dpf_eval_full_optimized(
+    b: u8,
+    key: &DPFKey,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128,
+) -> Vec<i64> {
+    let n = key.n;
+    if n == 0 {
+        return vec![];
+    }
+
+    let num_cw_levels = key.cw_levels.len();
+    let total_outputs = 1 << n;
+    let mut result = vec![0i64; total_outputs];
+
+    // Pre-allocate all buffers once
+    let mut hs_out_buffer = [0u8; AES_BLOCK_SIZE];
+    let mut hash_input_buffer = [0u8; AES_BLOCK_SIZE];
+    let mut temp_buffer = [0u8; AES_BLOCK_SIZE];
+
+    // Pre-compute HCW with LCW values to avoid repeated work
+    let mut hcw_with_lcw0 = [0u8; AES_BLOCK_SIZE];
+    let mut hcw_with_lcw1 = [0u8; AES_BLOCK_SIZE];
+    hcw_with_lcw0[..AES_BLOCK_SIZE - 1].copy_from_slice(&key.cw_n.0);
+    hcw_with_lcw0[AES_BLOCK_SIZE - 1] = key.cw_n.1;
+    hcw_with_lcw1[..AES_BLOCK_SIZE - 1].copy_from_slice(&key.cw_n.0);
+    hcw_with_lcw1[AES_BLOCK_SIZE - 1] = key.cw_n.2;
+
+    // Pre-compute sign multiplier
+    let sign = if b == 0 { 1i64 } else { -1i64 };
+
+    let mut current_seeds = vec![key.seed];
+    let mut next_seeds = Vec::new();
+
+    // Phase 1: Tree expansion for levels 0 to n-2
+    for i in 0..num_cw_levels {
+        let cw_i = &key.cw_levels[i];
+        next_seeds.clear();
+        next_seeds.reserve(current_seeds.len() * 2);
+
+        for prev_seed in &current_seeds {
+            let current_t = prev_seed[AES_BLOCK_SIZE - 1] & 1;
+            hs(hs_key, prev_seed, aes, &mut hs_out_buffer);
+
+            // Path for x_i = 0
+            let mut next_seed_0 = hs_out_buffer;
+            if current_t == 1 {
+                xor_bytes(&mut next_seed_0, cw_i);
+            }
+            next_seeds.push(next_seed_0);
+
+            // Path for x_i = 1 (reuse hs_out_buffer)
+            xor_bytes(&mut hs_out_buffer, prev_seed);
+            if current_t == 1 {
+                xor_bytes(&mut hs_out_buffer, cw_i);
+            }
+            next_seeds.push(hs_out_buffer);
+        }
+        std::mem::swap(&mut current_seeds, &mut next_seeds);
+    }
+
+    // Phase 2: Final level processing (level n-1)
+    let mut output_index = 0;
+
+    for current_seed in current_seeds {
+        let t_for_final = current_seed[AES_BLOCK_SIZE - 1] & 1;
+
+        // Process both final branches (x_n = 0 and x_n = 1)
+        for x_bit in 0u8..2u8 {
+            // Prepare hash input
+            hash_input_buffer = current_seed;
+            hash_input_buffer[AES_BLOCK_SIZE - 1] = t_for_final ^ x_bit;
+            
+            hs(hs_key, &hash_input_buffer, aes, &mut temp_buffer);
+
+            // Apply correction word if needed
+            if t_for_final == 1 {
+                let hcw_to_use = if x_bit == 0 { &hcw_with_lcw0 } else { &hcw_with_lcw1 };
+                xor_bytes(&mut temp_buffer, hcw_to_use);
+            }
+
+            // Normalize final seed - ensure only t_n bit remains in last byte
+            let t_n = temp_buffer[AES_BLOCK_SIZE - 1] & 1;
+            temp_buffer[AES_BLOCK_SIZE - 1] = t_n;
+
+            // ConvertG for final output (only using s_n part)
+            let convert_out = convert_g_final(&temp_buffer, aes);
+
+            // Calculate y_b = (-1)^b * (ConvertG(s_n) + t_n * CW_{n+1})
+            let t_term = if t_n == 1 { key.cw_np1 } else { 0 };
+            let final_result = sign.wrapping_mul(convert_out.wrapping_add(t_term));
+
+            if output_index < result.len() {
+                result[output_index] = final_result;
+                output_index += 1;
+            }
+        }
+    }
+
+    result
+}
+
+
+
 pub fn dpf_eval_bytes<const ENTRY_U64_SIZE: usize>(
     b: u8,
-    key: &DPFKey_Bytes<ENTRY_U64_SIZE>,
+    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     x: u32,
     aes: &Aes128,
@@ -751,6 +849,742 @@ pub fn dpf_eval_bytes<const ENTRY_U64_SIZE: usize>(
 }
 
 
+pub fn dpf_eval_bytes_full_optimized<const ENTRY_U64_SIZE: usize>(
+    b: u8,
+    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128,
+) -> Vec<[i64; ENTRY_U64_SIZE]> {
+    let n = key.n;
+    if n == 0 {
+        return vec![];
+    }
+
+    let num_cw_levels = key.cw_levels.len();
+    let total_outputs = 1 << n;
+    let mut result = vec![[0i64; ENTRY_U64_SIZE]; total_outputs];
+
+    // Pre-allocate all buffers once
+    let mut hs_out_buffer = [0u8; AES_BLOCK_SIZE];
+    let mut hash_input_buffer = [0u8; AES_BLOCK_SIZE];
+    let mut temp_buffer = [0u8; AES_BLOCK_SIZE];
+
+    // Pre-compute HCW with LCW values to avoid repeated work
+    let mut hcw_with_lcw0 = [0u8; AES_BLOCK_SIZE];
+    let mut hcw_with_lcw1 = [0u8; AES_BLOCK_SIZE];
+    hcw_with_lcw0[..AES_BLOCK_SIZE - 1].copy_from_slice(&key.cw_n.0);
+    hcw_with_lcw0[AES_BLOCK_SIZE - 1] = key.cw_n.1;
+    hcw_with_lcw1[..AES_BLOCK_SIZE - 1].copy_from_slice(&key.cw_n.0);
+    hcw_with_lcw1[AES_BLOCK_SIZE - 1] = key.cw_n.2;
+
+    // Pre-compute sign multiplier
+    let sign = if b == 0 { 1i64 } else { -1i64 };
+
+    let mut current_seeds = vec![key.seed];
+    let mut next_seeds = Vec::new();
+
+    // Phase 1: Tree expansion for levels 0 to n-2
+    for i in 0..num_cw_levels {
+        let cw_i = &key.cw_levels[i];
+        next_seeds.clear();
+        next_seeds.reserve(current_seeds.len() * 2);
+
+        for prev_seed in &current_seeds {
+            let current_t = prev_seed[AES_BLOCK_SIZE - 1] & 1;
+            hs(hs_key, prev_seed, aes, &mut hs_out_buffer);
+
+            // Path for x_i = 0
+            let mut next_seed_0 = hs_out_buffer;
+            if current_t == 1 {
+                xor_bytes(&mut next_seed_0, cw_i);
+            }
+            next_seeds.push(next_seed_0);
+
+            // Path for x_i = 1 (reuse hs_out_buffer)
+            xor_bytes(&mut hs_out_buffer, prev_seed);
+            if current_t == 1 {
+                xor_bytes(&mut hs_out_buffer, cw_i);
+            }
+            next_seeds.push(hs_out_buffer);
+        }
+        std::mem::swap(&mut current_seeds, &mut next_seeds);
+    }
+
+    // Phase 2: Final level processing (level n-1)
+    let mut output_index = 0;
+
+    for current_seed in current_seeds {
+        let t_for_final = current_seed[AES_BLOCK_SIZE - 1] & 1;
+
+        // Process both final branches (x_n = 0 and x_n = 1)
+        for x_bit in 0u8..2u8 {
+            // Prepare hash input
+            hash_input_buffer = current_seed;
+            hash_input_buffer[AES_BLOCK_SIZE - 1] = t_for_final ^ x_bit;
+            
+            hs(hs_key, &hash_input_buffer, aes, &mut temp_buffer);
+
+            // Apply correction word if needed
+            if t_for_final == 1 {
+                let hcw_to_use = if x_bit == 0 { &hcw_with_lcw0 } else { &hcw_with_lcw1 };
+                xor_bytes(&mut temp_buffer, hcw_to_use);
+            }
+
+            // Normalize final seed - ensure only t_n bit remains in last byte
+            let t_n = temp_buffer[AES_BLOCK_SIZE - 1] & 1;
+            temp_buffer[AES_BLOCK_SIZE - 1] = t_n;
+
+            // ConvertG for final output (only using s_n part)
+            let convert_out = convert_g_bytes::<ENTRY_U64_SIZE>(&temp_buffer, aes);
+
+            // Calculate y_b = (-1)^b * (ConvertG(s_n) + t_n * CW_{n+1}) for each entry
+            if output_index < result.len() {
+                for k in 0..ENTRY_U64_SIZE {
+                    let t_term = if t_n == 1 { key.cw_np1[k] } else { 0 };
+                    result[output_index][k] = sign.wrapping_mul(
+                        convert_out[k].wrapping_add(t_term)
+                    );
+                }
+                output_index += 1;
+            }
+        }
+    }
+
+    result
+}
+
+
+
+pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
+    target_points: &[(u32, [u64; ENTRY_U64_SIZE])],
+    num_buckets: usize,
+    bucket_size: usize,
+    bucket_bits: u32,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128, 
+) -> Vec<Vec<DPFKeyBytes<ENTRY_U64_SIZE>>> {
+    // client_keys[server_id][bucket_id] -> DPFKey
+    let mut client_keys: Vec<Vec<DPFKeyBytes<ENTRY_U64_SIZE>>> =
+        vec![Vec::with_capacity(num_buckets); 2];
+
+    for server_id in 0..2 {
+        for _ in 0..num_buckets {
+            // Initialize with dummy values that will be overwritten
+            // This ensures proper length so we can index into client_keys[server_id][bucket_idx]
+            client_keys[server_id].push(DPFKeyBytes {
+                n: 0,
+                seed: [0u8; AES_BLOCK_SIZE],
+                cw_levels: Vec::new(),
+                cw_n: ([0u8; AES_BLOCK_SIZE - 1], 0, 0),
+                cw_np1: [0i64; ENTRY_U64_SIZE],
+            });
+        }
+    }
+
+    println!("Generating DPF keys per bucket...");
+    for bucket_idx in 0..num_buckets {
+        let bucket_start_idx = (bucket_idx * bucket_size) as u32;
+        let bucket_end_idx = bucket_start_idx + bucket_size as u32;
+        let mut current_bucket_point_count = 0;
+
+        // Find points belonging to the current bucket
+        for (global_idx, value) in target_points {
+            if *global_idx >= bucket_start_idx && *global_idx < bucket_end_idx {
+                let local_idx = global_idx - bucket_start_idx;
+                println!(
+                    "  Found point {} in bucket {} (local index {})",
+                    global_idx, bucket_idx, local_idx
+                );
+                // Generate keys for this specific point
+                let (k0, k1) = dpf_gen_bytes(
+                    local_idx,
+                    *value, // DPF usually encodes the value directly
+                    bucket_bits as usize,
+                    hs_key,
+                    aes, 
+                );
+                client_keys[0][bucket_idx] = k0;
+                client_keys[1][bucket_idx] = k1;
+                current_bucket_point_count += 1;
+            }
+        }
+
+        // If no points found in this bucket, generate keys for a zero function
+        if current_bucket_point_count == 0 {
+            println!(
+                "  No target points in bucket {}. Generating zero function keys.",
+                bucket_idx
+            );
+            let (k0, k1) = dpf_gen_bytes(
+                0, // Arbitrary index for zero function
+                [0u64; ENTRY_U64_SIZE], // Value is zero
+                bucket_bits as usize,
+                hs_key,
+                aes,
+            );
+            // Still add the keys, but the count remains 0
+            client_keys[0][bucket_idx] = k0;
+            client_keys[1][bucket_idx] = k1;
+        }
+    }
+    println!("DPF key generation complete.");
+    client_keys
+}
+
+
+pub fn dpf_priv_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
+    server_id: u8,
+    server_keys: &[DPFKeyBytes<ENTRY_U64_SIZE>], 
+    db: &mut[[i64; ENTRY_U64_SIZE]],
+    bucket_size: &usize,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128,
+) {
+    println!("Server {} starting evaluation...", server_id);
+    let start = Instant::now();
+
+    // Process buckets in parallel using par_iter_mut
+    db.par_chunks_mut(*bucket_size)
+        .enumerate()
+        .for_each(|(bucket_idx, bucket)| {
+            let server_key = &server_keys[bucket_idx]; // Keys for this server, this bucket
+            let precomputed_seeds = dpf_eval_bytes_full_optimized(server_id, server_key, hs_key, aes);
+
+            // Inner loop over DB entries in the bucket
+            for (local_idx, db_entry) in bucket.iter_mut().enumerate() {
+
+                let eval_result = precomputed_seeds[local_idx];
+                for k in 0..ENTRY_U64_SIZE {
+                    db_entry[k] = db_entry[k].wrapping_add(eval_result[k]);
+                }
+            }
+            
+        });
+
+    let duration = start.elapsed();
+    println!(
+        "Server {} evaluation complete,",
+        server_id
+    );
+    println!("Time taken: {:?}", duration);
+    println!("In seconds: {:.2}s", duration.as_secs_f64());
+    println!("In milliseconds: {}ms", duration.as_millis());
+}
+
+
+
+pub fn dpf_priv_update_additive<const ENTRY_U64_SIZE: usize>(
+    server_id: u8,
+    server_key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+    db: &mut[[i64; ENTRY_U64_SIZE]],
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128,
+) {
+    println!("Starting evaluation and update...");
+    let start_eval = Instant::now();
+
+    let precomputed_seeds = dpf_full_eval_precompute_parallel_bytes(server_key, hs_key, aes);
+    //let precomputed_seeds = dpf_eval_bytes_full_optimized(server_id, server_key, hs_key, aes);
+    
+    let duration = start_eval.elapsed();
+    println!("Precomputation Evaluation and update took: {:?}s ({}ms)", duration.as_secs_f64(), duration.as_millis());
+
+    // for i in 0..db.len(){
+    //     for k in 0..ENTRY_U64_SIZE{
+    //         db[i][k] = db[i][k].wrapping_add(dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(server_id, server_key, hs_key, i as u32, aes, &precomputed_seeds)[k]);
+    //     }
+    // }
+
+    // --- Parallelized Loop ---
+    db.par_iter_mut()
+        .enumerate()
+        .for_each(|(i, db_entry)| {
+            let eval_result = dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(
+                server_id,
+                server_key,
+                hs_key,
+                i as u32,
+                aes,
+                &precomputed_seeds,
+            );
+
+            // Ensure values stay within bounds using modulo arithmetic
+            for k in 0..ENTRY_U64_SIZE {
+                // Use modulo to keep values within i64 bounds
+                db_entry[k] = db_entry[k].wrapping_add(eval_result[k]);
+            }
+
+            // let eval_result = precomputed_seeds[i];
+            // for k in 0..ENTRY_U64_SIZE {
+            //     db_entry[k] = db_entry[k].wrapping_add(eval_result[k]);
+            // }
+
+
+        });
+    // --- End of Parallelized Loop ---
+
+    let duration = start_eval.elapsed();
+    println!("Evaluation and update took: {:?}s ({}ms)", duration.as_secs_f64(), duration.as_millis());
+} 
+
+
+
+
+/// Generates DPF keys for the client based on target points and bucketing.
+///
+/// # Arguments
+/// * `target_points`: Vec of (global_index, value_to_encode) tuples.
+/// * `num_buckets`: Total number of buckets.
+/// * `bucket_size`: Number of database elements per bucket.
+/// * `bucket_bits`: Number of bits needed for a local index within a bucket (log2(bucket_size)).
+/// * `hs_key`: Hash seed key for DPF generation.
+/// * `aes`: AES cipher instance for DPF generation.
+///
+/// # Returns
+/// A tuple containing:
+/// * `client_keys`: Vec<Vec<DPFKey>> where client_keys[server_id][bucket_id] holds key for that server/bucket.
+pub fn dmpf_pir_query_gen(
+    target_points: &[(u32, u32)],
+    num_buckets: usize,
+    bucket_size: usize,
+    bucket_bits: u32,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128,
+) -> Vec<Vec<DPFKey>> {
+    // client_keys[server_id][bucket_id] -> DPFKey
+    let mut client_keys: Vec<Vec<DPFKey>> =
+        vec![Vec::with_capacity(num_buckets); 2];
+
+    for server_id in 0..2 {
+        for _ in 0..num_buckets {
+            // Initialize with dummy values that will be overwritten
+            // This ensures proper length so we can index into client_keys[server_id][bucket_idx]
+            client_keys[server_id].push(DPFKey {
+                n: 0,
+                seed: [0u8; AES_BLOCK_SIZE],
+                cw_levels: Vec::new(),
+                cw_n: ([0u8; AES_BLOCK_SIZE - 1], 0, 0),
+                cw_np1: 0,
+            });
+        }
+    }
+
+    //println!("Generating DPF keys per bucket...");
+    for bucket_idx in 0..num_buckets {
+        let bucket_start_idx = (bucket_idx * bucket_size) as u32;
+        let bucket_end_idx = bucket_start_idx + bucket_size as u32;
+        let mut current_bucket_point_count = 0;
+
+        // Find points belonging to the current bucket
+        for (global_idx, value) in target_points {
+            if *global_idx >= bucket_start_idx && *global_idx < bucket_end_idx {
+                let local_idx = global_idx - bucket_start_idx;
+                // println!(
+                //     "  Found point {} in bucket {} (local index {})",
+                //     global_idx, bucket_idx, local_idx
+                // );
+                // Generate keys for this specific point
+                let (k0, k1) = dpf_gen(
+                    local_idx,
+                    *value as u64, // DPF usually encodes the value directly
+                    bucket_bits as usize,
+                    hs_key,
+                    aes, 
+                );
+                client_keys[0][bucket_idx] = k0;
+                client_keys[1][bucket_idx] = k1;
+                current_bucket_point_count += 1;
+            }
+        }
+        // If no points found in this bucket, generate keys for a zero function
+        if current_bucket_point_count == 0 {
+            // println!(
+            //     "  No target points in bucket {}. Generating zero function keys.",
+            //     bucket_idx
+            // );
+            let (k0, k1) = dpf_gen(
+                0, // Arbitrary index for zero function
+                0, // Value is zero
+                bucket_bits as usize,
+                &hs_key,
+                &aes,
+            );
+            // Still add the keys, but the count remains 0
+            client_keys[0][bucket_idx] = k0;
+            client_keys[1][bucket_idx] = k1;
+        }
+    }
+    //println!("DPF key generation complete.");
+    client_keys
+}
+
+
+/// Evaluates DPF keys for a single server against the database.
+///
+/// This function processes all buckets assigned to this server, potentially in parallel.
+///
+/// # Arguments
+/// * `server_id`: The ID of the server (0 or 1).
+/// * `server_keys`: The DPF keys assigned to this server (`Vec<DPFKey>` where outer vec is by bucket).
+/// * `db`: A slice representing the entire database or the relevant portion.
+/// * `num_buckets`: Total number of buckets.
+/// * `bucket_size`: Number of database elements per bucket.
+/// * `hs_key`: Hash seed key for DPF evaluation.
+/// * `aes`: AES cipher instance for DPF evaluation.
+///
+/// # Returns
+/// `Vec<ENTRY>` where result[bucket_id] contains the accumulated evaluation results
+/// (shares) for each key corresponding to that bucket.
+pub fn dmpf_pir_query_eval<const ENTRY_U64_SIZE: usize>(
+    server_id: usize,
+    server_keys: &[DPFKey], 
+    db: &[Entry<ENTRY_U64_SIZE>],
+    num_buckets: usize,
+    bucket_size: usize,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128, // Pass AES by reference
+) -> Vec<[i64; ENTRY_U64_SIZE]> {
+    println!("Server {} starting evaluation...", server_id);
+    let start = Instant::now();
+
+    // Process buckets in parallel
+    let collected_results: Vec<[i64; ENTRY_U64_SIZE]> = (0..num_buckets)
+        .into_par_iter()
+        .map(|bucket_idx| {
+            let bucket_start_idx = bucket_idx * bucket_size;
+            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
+
+            // Initialize result vector local to this parallel task
+            let mut bucket_result: [i64; ENTRY_U64_SIZE]= [0i64; ENTRY_U64_SIZE]; 
+
+            // Precompute seeds for the current key
+            // let precomputed_seeds =
+            // dpf_full_eval_precompute_parallel_full_final_step(key, hs_key, aes);
+            let precomputed_seeds = dpf_eval_full_optimized(server_id as u8, key, hs_key, aes);
+
+            // Inner loop over DB entries in the bucket
+            for local_idx in 0..bucket_size {
+                let global_idx = bucket_start_idx + local_idx;
+
+                if global_idx >= db.len() {
+                    continue; // Skip if out of DB bounds
+                }
+                
+                let db_item_u64: &Entry<ENTRY_U64_SIZE> = &db[global_idx];
+
+                // // Evaluate the key quickly using precomputed data
+                // let eval_share = dpf_eval_fast_with_full_final_step(
+                //     server_id as u8,
+                //     key,
+                //     hs_key,
+                //     local_idx as u32,
+                //     aes,
+                //     &precomputed_seeds,
+                // );
+
+                // // Accumulate the result: share * db_value
+                // for k in 0..ENTRY_U64_SIZE {
+                //     bucket_result[k] = bucket_result[k].wrapping_add(eval_share.wrapping_mul(db_item_u64[k] as i64));
+                // }
+
+                let eval_share = precomputed_seeds[local_idx];
+                for k in 0..ENTRY_U64_SIZE {
+                    bucket_result[k] = bucket_result[k].wrapping_add(eval_share.wrapping_mul(db_item_u64[k] as i64));
+                }
+
+
+            }
+
+            // Return the computed results (shares) for this bucket
+            bucket_result
+        })
+        .collect(); // Collect the Vec<i64> results from all parallel bucket tasks
+
+    let duration = start.elapsed();
+    println!(
+        "Server {} evaluation complete,",
+        server_id
+    );
+    println!("Time taken: {:?}", duration);
+    println!("In seconds: {:.2}s", duration.as_secs_f64());
+    println!("In milliseconds: {}ms", duration.as_millis());
+
+    collected_results
+}
+
+
+pub fn dmpf_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
+    server_id: usize,
+    server_keys: &[DPFKey], 
+    db: &[[i64; ENTRY_U64_SIZE]],
+    num_buckets: usize,
+    bucket_size: usize,
+    hs_key: &[u8; AES_BLOCK_SIZE],
+    aes: &Aes128, // Pass AES by reference
+) -> Vec<[i64; ENTRY_U64_SIZE]> {
+    println!("Server {} starting evaluation...", server_id);
+    let start = Instant::now();
+
+    // Process buckets in parallel
+    let collected_results: Vec<[i64; ENTRY_U64_SIZE]> = (0..num_buckets)
+        .into_par_iter()
+        .map(|bucket_idx| {
+            let bucket_start_idx = bucket_idx * bucket_size;
+            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
+
+            // Initialize result vector local to this parallel task
+            let mut bucket_result: [i64; ENTRY_U64_SIZE]= [0i64; ENTRY_U64_SIZE]; 
+
+            // Precompute seeds for the current key
+            // let precomputed_seeds =
+            // dpf_full_eval_precompute_parallel_full_final_step(key, hs_key, aes);
+            let precomputed_seeds = dpf_eval_full_optimized(server_id as u8, key, hs_key, aes);
+
+            // Inner loop over DB entries in the bucket
+            for local_idx in 0..bucket_size {
+                let global_idx = bucket_start_idx + local_idx;
+
+                if global_idx >= db.len() {
+                    continue; // Skip if out of DB bounds
+                }
+                
+                let db_item_u64= &db[global_idx];
+
+                // // Evaluate the key quickly using precomputed data
+                // let eval_share = dpf_eval_fast_with_full_final_step(
+                //     server_id as u8,
+                //     key,
+                //     hs_key,
+                //     local_idx as u32,
+                //     aes,
+                //     &precomputed_seeds,
+                // );
+
+                // // Accumulate the result: share * db_value
+                // for k in 0..ENTRY_U64_SIZE {
+                //     bucket_result[k] = bucket_result[k].wrapping_add(eval_share.wrapping_mul(db_item_u64[k] as i64));
+                // }
+
+                let eval_share = precomputed_seeds[local_idx];
+                for k in 0..ENTRY_U64_SIZE {
+                    bucket_result[k] = bucket_result[k].wrapping_add(eval_share.wrapping_mul(db_item_u64[k] as i64));
+                }
+
+            }
+
+            // Return the computed results (shares) for this bucket
+            bucket_result
+        })
+        .collect(); // Collect the Vec<i64> results from all parallel bucket tasks
+
+    let duration = start.elapsed();
+    println!(
+        "Server {} evaluation complete,",
+        server_id
+    );
+    println!("Time taken: {:?}", duration);
+    println!("In seconds: {:.2}s", duration.as_secs_f64());
+    println!("In milliseconds: {}ms", duration.as_millis());
+
+    collected_results
+}
+
+
+/// Reconstructs the final results (vectors) from shares provided by multiple servers
+/// and formats them into Slots.
+///
+/// # Arguments
+/// * `all_server_results`: A slice where each element contains the results from one server.
+/// * `num_buckets`: Total number of buckets.
+/// * `ENTRY_U64_SIZE`: The dimension of the entry vectors (e.g., 32 for 256 bytes).
+///
+/// # Returns
+/// `Vec<Entry<ENTRY_U64_SIZE>>` containing the reconstructed vector results.
+pub fn dmpf_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
+    all_server_results: &[Vec<[i64; ENTRY_U64_SIZE]>],
+    num_buckets: usize,
+) -> Vec<Entry<ENTRY_U64_SIZE>> {
+    //println!("\n--- Client-Side Reconstruction (Multi-Server Vector) ---");
+
+    // --- Initial Validation ---
+    if all_server_results.is_empty() {
+        panic!("Received results from zero servers.");
+    }
+    let num_servers = all_server_results.len();
+    //println!("Reconstructing from {} servers.", num_servers);
+
+    // Check if all servers reported results for the expected number of buckets
+    for (server_id, results) in all_server_results.iter().enumerate() {
+        if results.len() != num_buckets {
+            panic!(
+                "Server {} reported results for {} buckets, expected {}",
+                server_id,
+                results.len(),
+                num_buckets
+            );
+        }
+    }
+
+    // --- Reconstruction Loop ---
+    let mut reconstructed_entries: Vec<Entry<ENTRY_U64_SIZE>> = Vec::with_capacity(num_buckets);
+
+    for bucket_idx in 0..num_buckets {
+        // Initialize a zero entry for this bucket
+        let mut result_u64: Entry<ENTRY_U64_SIZE> = [0u64; ENTRY_U64_SIZE];
+        
+        // Combine results from all servers for this bucket
+        for k in 0..ENTRY_U64_SIZE {
+            // Sum the k-th component across all servers for this bucket
+            let mut component_sum = 0i64;
+            for server_id in 0..num_servers {
+                // Access the result from each server
+                component_sum = component_sum.wrapping_add(all_server_results[server_id][bucket_idx][k]);
+            }
+            // Convert the combined i64 result to u64
+            result_u64[k] = component_sum as u64;
+        }
+        
+        // Add the reconstructed entry for this bucket
+        reconstructed_entries.push(result_u64);
+    }
+
+    //println!("Reconstruction complete.");
+    reconstructed_entries
+}
+
+
+
+/// Calculates optimal PIR configuration based on DB size exponent N and bucket number option.
+///
+/// Finds the largest power-of-2 number of buckets (`NUM_BUCKETS`)
+/// such that `NUM_BUCKETS * N <= floor(sqrt(1 << N))`, then optionally increases
+/// the number of buckets based on `BUCKET_NUM_OPTION`.
+///
+/// # Arguments
+///
+/// * `n`: The exponent for the database size (DB_SIZE = 1 << n). Must be > 0.
+/// * `bucket_num_option`: Multiplier for number of buckets. Must be a power of 2.
+///   - 1: Use optimal number of buckets (original behavior)
+///   - 2: Double the number of buckets
+///   - 4: Quadruple the number of buckets
+///   - etc. (must be a power of 2)
+///
+/// # Returns
+///
+/// A tuple `(DB_SIZE, NUM_BUCKETS, BUCKET_SIZE, BUCKET_BITS)`.
+///
+/// # Panics
+///
+/// Panics if `n` is 0.
+/// Panics if `bucket_num_option` is not a power of 2.
+/// Panics if `n` is large enough that `1 << n` overflows `usize`.
+/// Panics if intermediate floating-point calculations result in non-finite values.
+/// Panics if `bucket_num_option` results in more buckets than database entries.
+pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize, usize, u32) {
+    if n == 0 {
+        panic!("N must be greater than 0 to calculate PIR configuration.");
+    }
+
+    // Check if bucket_num_option is a power of 2
+    if bucket_num_option == 0 || (bucket_num_option & (bucket_num_option - 1)) != 0 {
+        panic!(
+            "BUCKET_NUM_OPTION ({}) must be a power of 2.",
+            bucket_num_option
+        );
+    }
+
+    // Calculate DB_SIZE, checking for potential overflow if n is very large
+    let db_size = 1usize.checked_shl(n as u32).unwrap_or_else(|| {
+        panic!("N ({}) is too large, 1 << N overflowed usize", n)
+    });
+
+    // Calculate the constraint threshold
+    let sqrt_db_size = (db_size as f64).sqrt();
+    if !sqrt_db_size.is_finite() {
+        panic!(
+            "Square root calculation resulted in non-finite value for N={}",
+            n
+        );
+    }
+    let sqrt_db_floor = sqrt_db_size.floor();
+
+    // Calculate the maximum allowed value for k (NUM_BUCKETS) based on the formula
+    // k * N <= floor(sqrt(DB_SIZE))  => k <= floor(sqrt(DB_SIZE)) / N
+    let max_k_float = sqrt_db_floor / (n as f64);
+    if !max_k_float.is_finite() {
+        panic!("Max k calculation resulted in non-finite value for N={}", n);
+    }
+
+    // We need the largest *power of 2* for NUM_BUCKETS that is <= max_k_float
+    let max_k_allowed = max_k_float.floor() as usize;
+
+    let base_num_buckets = if max_k_allowed == 0 {
+        // If even k=1 doesn't satisfy the condition (or N is huge),
+        // the largest power of 2 <= 0 doesn't make sense.
+        // Default to 1 bucket, as it's the smallest possible power-of-2 division.
+        if (n as f64) > sqrt_db_floor {
+            println!(
+                "Warning: For N={}, even 1 bucket violates the condition ({} > {}). \
+                 Defaulting to 1 bucket anyway.",
+                n, n, sqrt_db_floor
+            );
+        }
+        1 // Smallest power-of-2 division
+    } else {
+        // Find the greatest power of 2 less than or equal to max_k_allowed.
+        // Equivalent to 2^(floor(log2(max_k_allowed)))
+        1usize << max_k_allowed.ilog2()
+    };
+
+    // Apply bucket number option multiplier
+    let num_buckets = base_num_buckets.checked_mul(bucket_num_option).unwrap_or_else(|| {
+        panic!(
+            "BUCKET_NUM_OPTION ({}) causes overflow when multiplied with base_num_buckets ({})",
+            bucket_num_option, base_num_buckets
+        )
+    });
+
+    // Check feasibility: number of buckets cannot exceed database size
+    if num_buckets > db_size {
+         // Calculate valid power-of-2 BUCKET_NUM_OPTION values
+        let max_feasible_option = db_size / base_num_buckets;
+        let mut valid_options = Vec::new();
+        let mut option = 1;
+        while option <= max_feasible_option {
+            valid_options.push(option.to_string());
+            option *= 2;
+        }
+
+        panic!(
+            "BUCKET_NUM_OPTION ({}) results in too many buckets ({}). \
+             Cannot have more buckets than database entries ({}). \
+             Valid power-of-2 BUCKET_NUM_OPTION values for N={} are: {}",
+            bucket_num_option,
+            num_buckets,
+            db_size,
+            n,
+            valid_options.join(", ")
+        );
+    }
+
+    // Calculate BUCKET_SIZE. Since num_buckets and db_size are powers of 2,
+    // bucket_size will also be a power of 2 if num_buckets <= db_size.
+    let bucket_size = db_size / num_buckets;
+    
+    // Check that bucket_size is a power of 2 (required for efficient operations)
+    if bucket_size == 0 || (bucket_size & (bucket_size - 1)) != 0 {
+        panic!(
+            "BUCKET_NUM_OPTION ({}) results in bucket_size ({}) that is not a power of 2. \
+             This occurs when num_buckets ({}) doesn't divide db_size ({}) into power-of-2 chunks. \
+             Try a different BUCKET_NUM_OPTION value.",
+            bucket_num_option, bucket_size, num_buckets, db_size
+        );
+    }
+
+    let bucket_bits = bucket_size.ilog2(); // log2 of bucket_size
+
+    (db_size, num_buckets, bucket_size, bucket_bits)
+}
 
 
 /// Precomputes the state after the main loop for all 2^(n-1) paths using Rayon.
@@ -912,7 +1746,7 @@ pub fn dpf_eval_fast(
 /// Evaluates the DPF key using the precomputed loop results.
 pub fn dpf_eval_fast_bytes<const ENTRY_U64_SIZE: usize>(
     b: u8,
-    key: &DPFKey_Bytes<ENTRY_U64_SIZE>,
+    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     x: u32,
     aes: &Aes128,
@@ -987,7 +1821,7 @@ pub fn dpf_eval_fast_bytes<const ENTRY_U64_SIZE: usize>(
 /// Precomputes the state after the main loop for all 2^(n-1) paths using Rayon.
 /// Returns a Vec containing the final `current_seed` for each path prefix.
 pub fn dpf_full_eval_precompute_parallel_bytes<const ENTRY_U64_SIZE: usize>(
-    key: &DPFKey_Bytes<ENTRY_U64_SIZE>,
+    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE], 
     aes: &Aes128,
 ) -> Vec<[u8; AES_BLOCK_SIZE]> {
@@ -1046,16 +1880,6 @@ pub fn dpf_full_eval_precompute_parallel_bytes<const ENTRY_U64_SIZE: usize>(
     // After the loop, current_level_seeds contains the seeds for level n-1
     current_level_seeds
 }
-
-
-#[derive(Debug, Clone)] // Added Clone derive
-pub enum Slot<const ENTRY_U64_SIZE: usize> {
-    Single(Entry<ENTRY_U64_SIZE>), // For buckets with 0 or 1 target points
-    Many(Vec<Entry<ENTRY_U64_SIZE>>), // For buckets with multiple target points
-}
-
-
-
 
 
 #[derive(Clone, Copy, Debug)]
@@ -1226,586 +2050,6 @@ pub fn dpf_eval_fast_with_full_final_step(
 
     result
 }
-
-
-/// Calculates optimal PIR configuration based on DB size exponent N.
-///
-/// Finds the largest power-of-2 number of buckets (`NUM_BUCKETS`)
-/// such that `NUM_BUCKETS * N <= floor(sqrt(1 << N))`.
-/// It then derives the corresponding `DB_SIZE`, `BUCKET_SIZE`, and `BUCKET_BITS`.
-///
-/// # Arguments
-///
-/// * `n`: The exponent for the database size (DB_SIZE = 1 << n). Must be > 0.
-///
-/// # Returns
-///
-/// A tuple `(DB_SIZE, NUM_BUCKETS, BUCKET_SIZE, BUCKET_BITS)`.
-///
-/// # Panics
-///
-/// Panics if `n` is 0.
-/// Panics if `n` is large enough that `1 << n` overflows `usize`.
-/// Panics if intermediate floating-point calculations result in non-finite values.
-pub fn calculate_pir_config(n: usize) -> (usize, usize, usize, u32) {
-    if n == 0 {
-        panic!("N must be greater than 0 to calculate PIR configuration.");
-    }
-
-    // Calculate DB_SIZE, checking for potential overflow if n is very large
-    let db_size = 1usize.checked_shl(n as u32).unwrap_or_else(|| {
-        panic!("N ({}) is too large, 1 << N overflowed usize", n)
-    });
-
-    // Calculate the constraint threshold
-    let sqrt_db_size = (db_size as f64).sqrt();
-    if !sqrt_db_size.is_finite() {
-        panic!(
-            "Square root calculation resulted in non-finite value for N={}",
-            n
-        );
-    }
-    let sqrt_db_floor = sqrt_db_size.floor();
-
-    // Calculate the maximum allowed value for k (NUM_BUCKETS) based on the formula
-    // k * N <= floor(sqrt(DB_SIZE))  => k <= floor(sqrt(DB_SIZE)) / N
-    let max_k_float = sqrt_db_floor / (n as f64);
-    if !max_k_float.is_finite() {
-        panic!("Max k calculation resulted in non-finite value for N={}", n);
-    }
-
-    // We need the largest *power of 2* for NUM_BUCKETS that is <= max_k_float
-    let max_k_allowed = max_k_float.floor() as usize;
-
-    let num_buckets = if max_k_allowed == 0 {
-        // If even k=1 doesn't satisfy the condition (or N is huge),
-        // the largest power of 2 <= 0 doesn't make sense.
-        // Default to 1 bucket, as it's the smallest possible power-of-2 division.
-        if (n as f64) > sqrt_db_floor {
-            println!(
-                "Warning: For N={}, even 1 bucket violates the condition ({} > {}). \
-                 Defaulting to 1 bucket anyway.",
-                n, n, sqrt_db_floor
-            );
-        }
-        1 // Smallest power-of-2 division
-    } else {
-        // Find the greatest power of 2 less than or equal to max_k_allowed.
-        // Equivalent to 2^(floor(log2(max_k_allowed)))
-        1usize << max_k_allowed.ilog2()
-    };
-
-    // Calculate BUCKET_SIZE and BUCKET_BITS
-    // These divisions/logs are safe because db_size and num_buckets are powers of 2.
-    let bucket_size = db_size / num_buckets;
-    let bucket_bits = bucket_size.ilog2(); // log2 of bucket_size
-
-    (db_size, num_buckets, bucket_size, bucket_bits)
-}
-
-
-
-
-pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
-    target_points: &[(u32, [u64; ENTRY_U64_SIZE])],
-    num_buckets: usize,
-    bucket_size: usize,
-    bucket_bits: u32,
-    hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128, 
-) -> Vec<Vec<DPFKey_Bytes<ENTRY_U64_SIZE>>> {
-    // client_keys[server_id][bucket_id] -> DPFKey
-    let mut client_keys: Vec<Vec<DPFKey_Bytes<ENTRY_U64_SIZE>>> =
-        vec![Vec::with_capacity(num_buckets); 2];
-
-    for server_id in 0..2 {
-        for _ in 0..num_buckets {
-            // Initialize with dummy values that will be overwritten
-            // This ensures proper length so we can index into client_keys[server_id][bucket_idx]
-            client_keys[server_id].push(DPFKey_Bytes {
-                n: 0,
-                seed: [0u8; AES_BLOCK_SIZE],
-                cw_levels: Vec::new(),
-                cw_n: ([0u8; AES_BLOCK_SIZE - 1], 0, 0),
-                cw_np1: [0i64; ENTRY_U64_SIZE],
-            });
-        }
-    }
-
-
-
-
-    println!("Generating DPF keys per bucket...");
-    for bucket_idx in 0..num_buckets {
-        let bucket_start_idx = (bucket_idx * bucket_size) as u32;
-        let bucket_end_idx = bucket_start_idx + bucket_size as u32;
-        let mut current_bucket_point_count = 0;
-
-        // Find points belonging to the current bucket
-        for (global_idx, value) in target_points {
-            if *global_idx >= bucket_start_idx && *global_idx < bucket_end_idx {
-                let local_idx = global_idx - bucket_start_idx;
-                println!(
-                    "  Found point {} in bucket {} (local index {})",
-                    global_idx, bucket_idx, local_idx
-                );
-                // Generate keys for this specific point
-                let (k0, k1) = dpf_gen_bytes(
-                    local_idx,
-                    *value, // DPF usually encodes the value directly
-                    bucket_bits as usize,
-                    hs_key,
-                    aes, 
-                );
-                client_keys[0][bucket_idx] = k0;
-                client_keys[1][bucket_idx] = k1;
-                current_bucket_point_count += 1;
-            }
-        }
-
-        // If no points found in this bucket, generate keys for a zero function
-        if current_bucket_point_count == 0 {
-            println!(
-                "  No target points in bucket {}. Generating zero function keys.",
-                bucket_idx
-            );
-            let (k0, k1) = dpf_gen_bytes(
-                0, // Arbitrary index for zero function
-                [0u64; ENTRY_U64_SIZE], // Value is zero
-                bucket_bits as usize,
-                hs_key,
-                aes,
-            );
-            // Still add the keys, but the count remains 0
-            client_keys[0][bucket_idx] = k0;
-            client_keys[1][bucket_idx] = k1;
-        }
-    }
-    println!("DPF key generation complete.");
-    client_keys
-}
-
-
-pub fn dpf_priv_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
-    server_id: usize,
-    server_keys: &[DPFKey_Bytes<ENTRY_U64_SIZE>], 
-    db: &mut[[i64; ENTRY_U64_SIZE]],
-    bucket_size: usize,
-    hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128,
-) {
-    println!("Server {} starting evaluation...", server_id);
-    let start = Instant::now();
-
-    // Process buckets in parallel using par_iter_mut
-    db.par_chunks_mut(bucket_size)
-        .enumerate()
-        .for_each(|(bucket_idx, bucket)| {
-            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
-            // Precompute seeds for the current key
-            let precomputed_seeds =
-                dpf_full_eval_precompute_parallel_bytes(key, hs_key, aes);
-
-            // Inner loop over DB entries in the bucket
-            for (local_idx, db_entry) in bucket.iter_mut().enumerate() {
-                // Evaluate the key quickly using precomputed data
-                let eval_share = dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(
-                    server_id as u8,
-                    key,
-                    hs_key,
-                    local_idx as u32,
-                    aes,
-                    &precomputed_seeds,
-                );
-
-                // Update the database entry
-                for k in 0..ENTRY_U64_SIZE {
-                    db_entry[k] = db_entry[k].wrapping_add(eval_share[k]);
-                }
-            }
-            
-        });
-
-    let duration = start.elapsed();
-    println!(
-        "Server {} evaluation complete,",
-        server_id
-    );
-    println!("Time taken: {:?}", duration);
-    println!("In seconds: {:.2}s", duration.as_secs_f64());
-    println!("In milliseconds: {}ms", duration.as_millis());
-}
-
-
-
-pub fn dpf_priv_update_additive<const ENTRY_U64_SIZE: usize>(
-    server_id: u8,
-    server_key: &DPFKey_Bytes<ENTRY_U64_SIZE>,
-    db: &mut[[i64; ENTRY_U64_SIZE]],
-    hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128,
-) {
-    println!("Starting evaluation and update...");
-    let start_eval = Instant::now();
-
-    let precomputed_seeds = dpf_full_eval_precompute_parallel_bytes(server_key, hs_key, aes);
-    
-    let duration = start_eval.elapsed();
-    println!("Precomputation Evaluation and update took: {:?}s ({}ms)", duration.as_secs_f64(), duration.as_millis());
-
-    // for i in 0..db.len(){
-    //     for k in 0..ENTRY_U64_SIZE{
-    //         db[i][k] = db[i][k].wrapping_add(dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(server_id, server_key, hs_key, i as u32, aes, &precomputed_seeds)[k]);
-    //     }
-    // }
-
-    // --- Parallelized Loop ---
-    db.par_iter_mut()
-        .enumerate()
-        .for_each(|(i, db_entry)| {
-            let eval_result = dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(
-                server_id,
-                server_key,
-                hs_key,
-                i as u32,
-                aes,
-                &precomputed_seeds,
-            );
-
-            // Ensure values stay within bounds using modulo arithmetic
-            for k in 0..ENTRY_U64_SIZE {
-                // Use modulo to keep values within i64 bounds
-                db_entry[k] = db_entry[k].wrapping_add(eval_result[k]);
-            }
-        });
-    // --- End of Parallelized Loop ---
-
-    let duration = start_eval.elapsed();
-    println!("Evaluation and update took: {:?}s ({}ms)", duration.as_secs_f64(), duration.as_millis());
-} 
-
-
-
-
-/// Generates DPF keys for the client based on target points and bucketing.
-///
-/// # Arguments
-/// * `target_points`: Vec of (global_index, value_to_encode) tuples.
-/// * `num_buckets`: Total number of buckets.
-/// * `bucket_size`: Number of database elements per bucket.
-/// * `bucket_bits`: Number of bits needed for a local index within a bucket (log2(bucket_size)).
-/// * `hs_key`: Hash seed key for DPF generation.
-/// * `aes`: AES cipher instance for DPF generation.
-///
-/// # Returns
-/// A tuple containing:
-/// * `client_keys`: Vec<Vec<DPFKey>> where client_keys[server_id][bucket_id] holds key for that server/bucket.
-pub fn dmpf_pir_query_gen(
-    target_points: &[(u32, u32)],
-    num_buckets: usize,
-    bucket_size: usize,
-    bucket_bits: u32,
-    hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128,
-) -> Vec<Vec<DPFKey>> {
-    // client_keys[server_id][bucket_id] -> DPFKey
-    let mut client_keys: Vec<Vec<DPFKey>> =
-        vec![Vec::with_capacity(num_buckets); 2];
-
-    for server_id in 0..2 {
-        for _ in 0..num_buckets {
-            // Initialize with dummy values that will be overwritten
-            // This ensures proper length so we can index into client_keys[server_id][bucket_idx]
-            client_keys[server_id].push(DPFKey {
-                n: 0,
-                seed: [0u8; AES_BLOCK_SIZE],
-                cw_levels: Vec::new(),
-                cw_n: ([0u8; AES_BLOCK_SIZE - 1], 0, 0),
-                cw_np1: 0,
-            });
-        }
-    }
-
-    //println!("Generating DPF keys per bucket...");
-    for bucket_idx in 0..num_buckets {
-        let bucket_start_idx = (bucket_idx * bucket_size) as u32;
-        let bucket_end_idx = bucket_start_idx + bucket_size as u32;
-        let mut current_bucket_point_count = 0;
-
-        // Find points belonging to the current bucket
-        for (global_idx, value) in target_points {
-            if *global_idx >= bucket_start_idx && *global_idx < bucket_end_idx {
-                let local_idx = global_idx - bucket_start_idx;
-                // println!(
-                //     "  Found point {} in bucket {} (local index {})",
-                //     global_idx, bucket_idx, local_idx
-                // );
-                // Generate keys for this specific point
-                let (k0, k1) = dpf_gen(
-                    local_idx,
-                    *value as u64, // DPF usually encodes the value directly
-                    bucket_bits as usize,
-                    hs_key,
-                    aes, 
-                );
-                client_keys[0][bucket_idx] = k0;
-                client_keys[1][bucket_idx] = k1;
-                current_bucket_point_count += 1;
-            }
-        }
-        // If no points found in this bucket, generate keys for a zero function
-        if current_bucket_point_count == 0 {
-            // println!(
-            //     "  No target points in bucket {}. Generating zero function keys.",
-            //     bucket_idx
-            // );
-            let (k0, k1) = dpf_gen(
-                0, // Arbitrary index for zero function
-                0, // Value is zero
-                bucket_bits as usize,
-                &hs_key,
-                &aes,
-            );
-            // Still add the keys, but the count remains 0
-            client_keys[0][bucket_idx] = k0;
-            client_keys[1][bucket_idx] = k1;
-        }
-    }
-    //println!("DPF key generation complete.");
-    client_keys
-}
-
-
-/// Evaluates DPF keys for a single server against the database.
-///
-/// This function processes all buckets assigned to this server, potentially in parallel.
-///
-/// # Arguments
-/// * `server_id`: The ID of the server (0 or 1).
-/// * `server_keys`: The DPF keys assigned to this server (`Vec<DPFKey>` where outer vec is by bucket).
-/// * `db`: A slice representing the entire database or the relevant portion.
-/// * `num_buckets`: Total number of buckets.
-/// * `bucket_size`: Number of database elements per bucket.
-/// * `hs_key`: Hash seed key for DPF evaluation.
-/// * `aes`: AES cipher instance for DPF evaluation.
-///
-/// # Returns
-/// `Vec<ENTRY>` where result[bucket_id] contains the accumulated evaluation results
-/// (shares) for each key corresponding to that bucket.
-pub fn dmpf_pir_query_eval<const ENTRY_U64_SIZE: usize>(
-    server_id: usize,
-    server_keys: &[DPFKey], 
-    db: &[Entry<ENTRY_U64_SIZE>],
-    num_buckets: usize,
-    bucket_size: usize,
-    hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128, // Pass AES by reference
-) -> Vec<[i64; ENTRY_U64_SIZE]> {
-    println!("Server {} starting evaluation...", server_id);
-    let start = Instant::now();
-
-    // Process buckets in parallel
-    let collected_results: Vec<[i64; ENTRY_U64_SIZE]> = (0..num_buckets)
-        .into_par_iter()
-        .map(|bucket_idx| {
-            let bucket_start_idx = bucket_idx * bucket_size;
-            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
-
-            // Initialize result vector local to this parallel task
-            let mut bucket_result: [i64; ENTRY_U64_SIZE]= [0i64; ENTRY_U64_SIZE]; 
-
-            // Precompute seeds for the current key
-            // Note: Cloning AES here if precompute needs its own instance
-            let precomputed_seeds =
-                dpf_full_eval_precompute_parallel(key, hs_key, aes);
-
-            // Inner loop over DB entries in the bucket
-            for local_idx in 0..bucket_size {
-                let global_idx = bucket_start_idx + local_idx;
-
-                if global_idx >= db.len() {
-                    continue; // Skip if out of DB bounds
-                }
-                
-                let db_item_u64: &Entry<ENTRY_U64_SIZE> = &db[global_idx];
-
-                // Evaluate the key quickly using precomputed data
-                let eval_share = dpf_eval_fast(
-                    server_id as u8,
-                    key,
-                    hs_key,
-                    local_idx as u32,
-                    aes,
-                    &precomputed_seeds,
-                );
-
-                // Accumulate the result: share * db_value
-                for k in 0..ENTRY_U64_SIZE {
-                    bucket_result[k] = bucket_result[k].wrapping_add(eval_share.wrapping_mul(db_item_u64[k] as i64));
-                }
-
-            }
-
-            // Return the computed results (shares) for this bucket
-            bucket_result
-        })
-        .collect(); // Collect the Vec<i64> results from all parallel bucket tasks
-
-    let duration = start.elapsed();
-    println!(
-        "Server {} evaluation complete,",
-        server_id
-    );
-    println!("Time taken: {:?}", duration);
-    println!("In seconds: {:.2}s", duration.as_secs_f64());
-    println!("In milliseconds: {}ms", duration.as_millis());
-
-    collected_results
-}
-
-
-pub fn dmpf_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
-    server_id: usize,
-    server_keys: &[DPFKey], 
-    db: &[[i64; ENTRY_U64_SIZE]],
-    num_buckets: usize,
-    bucket_size: usize,
-    hs_key: &[u8; AES_BLOCK_SIZE],
-    aes: &Aes128, // Pass AES by reference
-) -> Vec<[i64; ENTRY_U64_SIZE]> {
-    println!("Server {} starting evaluation...", server_id);
-    let start = Instant::now();
-
-    // Process buckets in parallel
-    let collected_results: Vec<[i64; ENTRY_U64_SIZE]> = (0..num_buckets)
-        .into_par_iter()
-        .map(|bucket_idx| {
-            let bucket_start_idx = bucket_idx * bucket_size;
-            let key = &server_keys[bucket_idx]; // Keys for this server, this bucket
-
-            // Initialize result vector local to this parallel task
-            let mut bucket_result: [i64; ENTRY_U64_SIZE]= [0i64; ENTRY_U64_SIZE]; 
-
-            // Precompute seeds for the current key
-            // Note: Cloning AES here if precompute needs its own instance
-            let precomputed_seeds =
-                dpf_full_eval_precompute_parallel(key, hs_key, aes);
-
-            // Inner loop over DB entries in the bucket
-            for local_idx in 0..bucket_size {
-                let global_idx = bucket_start_idx + local_idx;
-
-                if global_idx >= db.len() {
-                    continue; // Skip if out of DB bounds
-                }
-                
-                let db_item_u64= &db[global_idx];
-
-                // Evaluate the key quickly using precomputed data
-                let eval_share = dpf_eval_fast(
-                    server_id as u8,
-                    key,
-                    hs_key,
-                    local_idx as u32,
-                    aes,
-                    &precomputed_seeds,
-                );
-
-                // Accumulate the result: share * db_value
-                for k in 0..ENTRY_U64_SIZE {
-                    bucket_result[k] = bucket_result[k].wrapping_add(eval_share.wrapping_mul(db_item_u64[k] as i64));
-                }
-
-            }
-
-            // Return the computed results (shares) for this bucket
-            bucket_result
-        })
-        .collect(); // Collect the Vec<i64> results from all parallel bucket tasks
-
-    let duration = start.elapsed();
-    println!(
-        "Server {} evaluation complete,",
-        server_id
-    );
-    println!("Time taken: {:?}", duration);
-    println!("In seconds: {:.2}s", duration.as_secs_f64());
-    println!("In milliseconds: {}ms", duration.as_millis());
-
-    collected_results
-}
-
-
-/// Reconstructs the final results (vectors) from shares provided by multiple servers
-/// and formats them into Slots.
-///
-/// # Arguments
-/// * `all_server_results`: A slice where each element contains the results from one server.
-/// * `num_buckets`: Total number of buckets.
-/// * `ENTRY_U64_SIZE`: The dimension of the entry vectors (e.g., 32 for 256 bytes).
-///
-/// # Returns
-/// `Vec<Entry<ENTRY_U64_SIZE>>` containing the reconstructed vector results.
-pub fn dmpf_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
-    all_server_results: &[Vec<[i64; ENTRY_U64_SIZE]>],
-    num_buckets: usize,
-) -> Vec<Entry<ENTRY_U64_SIZE>> {
-    //println!("\n--- Client-Side Reconstruction (Multi-Server Vector) ---");
-
-    // --- Initial Validation ---
-    if all_server_results.is_empty() {
-        panic!("Received results from zero servers.");
-    }
-    let num_servers = all_server_results.len();
-    //println!("Reconstructing from {} servers.", num_servers);
-
-    // Check if all servers reported results for the expected number of buckets
-    for (server_id, results) in all_server_results.iter().enumerate() {
-        if results.len() != num_buckets {
-            panic!(
-                "Server {} reported results for {} buckets, expected {}",
-                server_id,
-                results.len(),
-                num_buckets
-            );
-        }
-    }
-
-    // --- Reconstruction Loop ---
-    let mut reconstructed_entries: Vec<Entry<ENTRY_U64_SIZE>> = Vec::with_capacity(num_buckets);
-
-    for bucket_idx in 0..num_buckets {
-        // Initialize a zero entry for this bucket
-        let mut result_u64: Entry<ENTRY_U64_SIZE> = [0u64; ENTRY_U64_SIZE];
-        
-        // Combine results from all servers for this bucket
-        for k in 0..ENTRY_U64_SIZE {
-            // Sum the k-th component across all servers for this bucket
-            let mut component_sum = 0i64;
-            for server_id in 0..num_servers {
-                // Access the result from each server
-                component_sum = component_sum.wrapping_add(all_server_results[server_id][bucket_idx][k]);
-            }
-            // Convert the combined i64 result to u64
-            result_u64[k] = component_sum as u64;
-        }
-        
-        // Add the reconstructed entry for this bucket
-        reconstructed_entries.push(result_u64);
-    }
-
-    //println!("Reconstruction complete.");
-    reconstructed_entries
-}
-
-
-
-
-
-
-
-
-
 
 
 

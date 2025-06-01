@@ -7,16 +7,16 @@ use cuckoo_lib::{
 };
 
 use std::collections::HashMap;
-use dpf_half_tree_lib::dmpf_pir_query_eval;
+use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_eval, BitDPFKey};
 use aes::Aes128;
 use aes::cipher::{KeyInit, generic_array::GenericArray};
 
 use crate::ms_kpir::{
     CsvRow, ServerSync, SyncResponse, ByteArrayEntry, ConfigData,
     UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse,
-    pir_service_server::PirService,
-    pir_service_client::PirServiceClient,
-    BucketKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest, CuckooKeys
+    bit_optimized_pir_service_server::BitOptimizedPirService,
+    bit_optimized_pir_service_client::BitOptimizedPirServiceClient,
+    BucketBitOptimizedKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest, CuckooKeys
 };
 
 // Import constants from config module
@@ -96,10 +96,10 @@ impl Default for MyPIRService {
 }
 
 #[tonic::async_trait]
-impl PirService for MyPIRService {
+impl BitOptimizedPirService for MyPIRService {
     async fn pir_query(
         &self,
-        request: Request<BucketKeys>,
+        request: Request<BucketBitOptimizedKeys>,
     ) -> Result<Response<ServerResponse>, Status> {
         let query = request.into_inner();
         let client_id = query.client_id;
@@ -150,17 +150,17 @@ impl PirService for MyPIRService {
             
             let cw_n = (hcw, cw_n_proto.lcw0 as u8, cw_n_proto.lcw1 as u8);
             
-            Ok::<_, Status>(dpf_half_tree_lib::DPFKey {
+            Ok::<_, Status>(BitDPFKey {
                 n: proto_key.n as usize,
                 seed,
                 cw_levels,
                 cw_n,
-                cw_np1: proto_key.cw_np1,
+                cw_np1: proto_key.cw_np1.try_into().unwrap(),
             })
         }).collect::<Result<Vec<_>, _>>()?;
 
         // Evaluate the query - using references to table and other data
-        let results = dmpf_pir_query_eval::<{ ENTRY_U64_COUNT }>(
+        let results = dmpf_bit_pir_query_eval::<{ ENTRY_U64_COUNT }>(
             server_id,
             &dpf_keys,
             &cuckoo_table.table,
@@ -301,7 +301,7 @@ impl PirService for MyPIRService {
 
         // Create a client for each server and send the CuckooHashTable details
         for server_addr in server_addresses {
-            let mut client = PirServiceClient::connect(format!("http://{}", server_addr))
+            let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr))
                 .await
                 .map_err(|e| Status::internal(format!("Failed to connect to server {}: {}", server_addr, e)))?;
 

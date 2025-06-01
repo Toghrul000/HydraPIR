@@ -1,17 +1,19 @@
-use crate::ms_kpir::pir_service_client::PirServiceClient;
-use crate::ms_kpir::{ClientSessionInitRequest, BucketKeys, DpfKey, CuckooKeys};
-use crate::ms_kpir::dpf_key;
-use cuckoo_lib::get_hierarchical_indices;
-use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers};
+use crate::ms_kpir::bit_optimized_pir_service_private_update_client::BitOptimizedPirServicePrivateUpdateClient;
+use crate::ms_kpir::{dpf_key_bytes, BucketBitOptimizedKeys, ClientSessionInitRequest, BitDpfKey, DpfKeyBytes, PrivUpdateRequest};
+use crate::ms_kpir::bit_dpf_key;
+use cuckoo_lib::{encode_entry, get_hierarchical_indices, Entry};
+use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_gen, dmpf_bit_pir_reconstruct_servers, dpf_priv_xor_update_gen_buckets};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand::RngCore;
 use futures::future::join_all;
+use std::sync::Arc;
 use uuid::Uuid;
 use std::error::Error;
 use std::io::{self, Write};
 use aes::Aes128;
 use aes::cipher::{KeyInit, generic_array::GenericArray};
+
 
 use kpir::config::ENTRY_U64_COUNT;
 // const ENTRY_U64_COUNT: usize = 32; // 32 u64s = 256 bytes
@@ -24,6 +26,7 @@ pub struct ClientSession {
     pub num_buckets: u32,
     pub bucket_size: u32,
     pub bucket_bits: u32,
+    pub n_bits: u32,
     pub bucket_selection_key: [u8; 16], // Cuckoo bucket chosing key
     pub local_hash_keys: Vec<[u8; 16]>,  // Cuckoo hash keys from server
     pub entry_u64_count: usize,
@@ -50,6 +53,7 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
         num_buckets: 0,
         bucket_size: 0,
         bucket_bits: 0,
+        n_bits: 0,
         bucket_selection_key: [0u8; 16],
         local_hash_keys: Vec::new(),
         entry_u64_count: 0,
@@ -57,10 +61,8 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     };
     
     // Send session init request to each server
-    let mut first_server_keys: Option<(Vec<Vec<u8>>, Vec<u8>)> = None;
-    
-    for (i, &addr) in server_addrs.iter().enumerate() {
-        let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+    for &addr in server_addrs {
+        let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
         
         let init_request = ClientSessionInitRequest {
             client_id: client_id.clone(),
@@ -76,53 +78,16 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
             session.num_buckets = response_inner.num_buckets;
             session.bucket_size = response_inner.bucket_size;
             session.bucket_bits = response_inner.bucket_bits;
+            session.n_bits = response_inner.n_bits;
             session.local_hash_keys = response_inner.local_hash_keys.iter()
-                .map(|k| {
-                    let slice: &[u8] = k.as_slice();
-                    let array: [u8; 16] = slice.try_into().expect("Expected a 16-byte key");
-                    array
-                })
-                .collect();
-            // Store the first server's keys to send to other servers
-            first_server_keys = Some((
-                response_inner.local_hash_keys.clone(),
-                response_inner.bucket_selection_key.clone()
-            ));
-            // Now use the cloned value for the session
+            .map(|k| {
+                let slice: &[u8] = k.as_slice();
+                let array: [u8; 16] = slice.try_into().expect("Expected a 16-byte key");
+                array
+            })
+            .collect();
             session.bucket_selection_key = response_inner.bucket_selection_key.try_into().unwrap();
             session.entry_u64_count = response_inner.entry_u64_count as usize;
-        } else if i > 0 {
-            // For subsequent servers, check if their keys are different from first server's keys
-            if let Some((first_local_hash_keys, first_bucket_selection_key)) = &first_server_keys {
-                // Check if either the local hash keys or bucket selection key is different
-                let keys_are_different = 
-                    // Check if lengths are different
-                    response_inner.local_hash_keys.len() != first_local_hash_keys.len() ||
-                    // Check if bucket selection key is different
-                    response_inner.bucket_selection_key != *first_bucket_selection_key ||
-                    // Check if any local hash key is different
-                    response_inner.local_hash_keys.iter()
-                        .zip(first_local_hash_keys.iter())
-                        .any(|(a, b)| a != b);
-
-                if keys_are_different {
-                    println!("Server at {} has different keys than first server, updating...", addr);
-                    let cuckoo_keys = CuckooKeys {
-                        local_hash_keys: first_local_hash_keys.clone(),
-                        bucket_selection_key: first_bucket_selection_key.clone(),
-                    };
-                    
-                    let response = client.send_cuckoo_keys(tonic::Request::new(cuckoo_keys)).await?;
-                    let response_inner = response.into_inner();
-                    if !response_inner.success {
-                        println!("Warning: Failed to sync Cuckoo keys with server at {}", addr);
-                    } else {
-                        println!("Successfully synced Cuckoo keys with server at {}", addr);
-                    }
-                } else {
-                    println!("Server at {} already has the same keys as first server, skipping update", addr);
-                }
-            }
         }
         
         println!("Initialized session with server at {}", addr);
@@ -135,7 +100,14 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
     Ok(session)
 }
 
-pub async fn execute_pir_query_and_display_results(
+// Helper function to create AES instance from key
+fn create_aes(key: &[u8; 16]) -> Aes128 {
+    let aes_key = GenericArray::clone_from_slice(key);
+    Aes128::new(&aes_key)
+}
+
+
+async fn execute_pir_query_and_display_results(
     session: &ClientSession,
     server_addrs: &[&str],
     input_query_key: &str,
@@ -149,53 +121,49 @@ pub async fn execute_pir_query_and_display_results(
         &(session.bucket_size as usize), 
         input_query_key);
 
-    let beta = 1;
-    let target_points: Vec<(u32, u32)> = global_indexes.iter().map(|x| (*x as u32, beta)).collect();
-    
+    let target_points: Vec<u32> = global_indexes.iter().map(|x| *x as u32).collect();
+
     // Get AES instance - needed for the DPF
     let aes = create_aes(&session.aes_key);
 
-    let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
+    let client_keys = dmpf_bit_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
     
     let mut server_futures = Vec::new();
 
-    for (i, &addr) in server_addrs.iter().enumerate() {
-        let client_keys_for_server = &client_keys[i];
-        let client_future = async move {
-
-            let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
-            
-            // Convert Rust DPFKey to protobuf DPFKey
-            let proto_bucket_keys = client_keys_for_server.clone().iter().map(|key| {
-                // Try with just the struct name, let Rust use the import correctly
-                let cwn = dpf_key::Cwn {
-                    hcw: key.cw_n.0.to_vec(),
-                    lcw0: key.cw_n.1 as u32,
-                    lcw1: key.cw_n.2 as u32,
-                };
+    for (group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
+        for (_, &addr) in addr_chunk.iter().enumerate() {
+            let client_keys_for_group = &client_keys[group_index];
+            let client_future = async move {
+                let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
                 
-                // Create the DPFKey
-                DpfKey {
-                    n: key.n as u32,
-                    seed: key.seed.to_vec(),
-                    cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
-                    cw_n: Some(cwn),
-                    cw_np1: key.cw_np1,
-                }
-            }).collect();
-
-            // Create BucketKeys request
-            let request = tonic::Request::new(BucketKeys {
-                client_id: session.client_id.clone(),
-                server_id: i as u32,
-                bucket_key: proto_bucket_keys,
-            });
-
-            let response = client.pir_query(request).await?;
-            Ok::<_, Box<dyn Error>>(response.into_inner())
-
-        };
-        server_futures.push(client_future);
+                // Use group_index to index client_keys
+                let proto_bucket_keys = client_keys_for_group.clone().iter().map(|key| {
+                    let cwn = bit_dpf_key::Cwn {
+                        hcw: key.cw_n.0.to_vec(),
+                        lcw0: key.cw_n.1 as u32,
+                        lcw1: key.cw_n.2 as u32,
+                    };
+        
+                    BitDpfKey {
+                        n: key.n as u32,
+                        seed: key.seed.to_vec(),
+                        cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
+                        cw_n: Some(cwn),
+                        cw_np1: key.cw_np1.to_vec(),
+                    }
+                }).collect();
+        
+                let request = tonic::Request::new(BucketBitOptimizedKeys {
+                    client_id: session.client_id.clone(),
+                    server_id: group_index as u32,
+                    bucket_key: proto_bucket_keys,
+                });
+        
+                let response = client.pir_query(request).await?;
+                Ok::<_, Box<dyn Error>>(response.into_inner())
+            };
+            server_futures.push(client_future);
+        }
     }
 
     // // Wait for all server responses in parallel
@@ -225,7 +193,7 @@ pub async fn execute_pir_query_and_display_results(
     }).collect();
 
     // Run reconstruction
-    let final_slots = dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
+    let final_slots = dmpf_bit_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
         &all_server_results,
         session.num_buckets as usize,
     );
@@ -269,17 +237,116 @@ pub async fn execute_pir_query_and_display_results(
 
 }
 
-// Helper function to create AES instance from key
-pub fn create_aes(key: &[u8; 16]) -> Aes128 {
-    let aes_key = GenericArray::clone_from_slice(key);
-    Aes128::new(&aes_key)
+
+
+async fn execute_private_update(
+    session: &ClientSession,
+    server_addrs: &[&str],
+    global_idx: usize,
+    old_entry: &[u64; ENTRY_U64_COUNT],
+    input_query_key: &str,
+    new_value: &str,
+) -> Result<(), Box<dyn Error>> {
+
+    let new_value = encode_entry::<ENTRY_U64_COUNT>(input_query_key, new_value).unwrap();
+
+    let mut beta: Entry<ENTRY_U64_COUNT> = [0u64; ENTRY_U64_COUNT];
+
+    for i in 0..ENTRY_U64_COUNT {
+        beta[i] = new_value[i] ^ old_entry[i];
+    }
+
+    let aes = create_aes(&session.aes_key);
+
+    let target_points = vec![(global_idx as u32, beta)];
+
+    // Generate DPF keys for the update
+    let update_keys = dpf_priv_xor_update_gen_buckets::<ENTRY_U64_COUNT>(
+        &target_points,
+        session.num_buckets as usize,
+        session.bucket_size as usize,
+        session.bucket_bits,
+        &session.hs_key,
+        &aes,
+    );
+
+    // Wrap the keys in Arc for shared ownership
+    let update_key_0 = Arc::new(update_keys[0].clone());
+    let update_key_1 = Arc::new(update_keys[1].clone());
+
+    let mut server_futures = Vec::new();
+
+    for (_group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
+        for (server_index, &addr) in addr_chunk.iter().enumerate() {
+            // Clone the Arc (cheap operation)
+            let update_keys_0 = Arc::clone(&update_key_0);
+            let update_keys_1 = Arc::clone(&update_key_1);
+            
+            let client_future = async move {
+                let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
+                let update_keys = if server_index == 0 {
+                    (*update_keys_0).clone()
+                } else {
+                    (*update_keys_1).clone()
+                };
+
+                let update_keys_proto = update_keys.iter().map(|key| {
+                    let cwn = dpf_key_bytes::Cwn {
+                        hcw: key.cw_n.0.to_vec(),
+                        lcw0: key.cw_n.1 as u32,
+                        lcw1: key.cw_n.2 as u32,
+                    };
+
+                    DpfKeyBytes {
+                        n: key.n as u32,
+                        seed: key.seed.to_vec(),
+                        cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
+                        cw_n: Some(cwn),
+                        cw_np1: key.cw_np1.to_vec(),
+                    }
+                }).collect();
+
+                let request = tonic::Request::new(PrivUpdateRequest {
+                    client_id: session.client_id.clone(),
+                    server_id: server_index as u32,
+                    update_keys: update_keys_proto,
+                });
+
+                let response = client.private_update(request).await?;
+                Ok::<_, Box<dyn Error>>(response)
+            };
+            server_futures.push(client_future);
+        }
+    }
+
+    // // Wait for all server responses in parallel
+    // let responses = join_all(server_futures).await
+    //     .into_iter()
+    //     .collect::<Result<Vec<_>, _>>()?;
+
+    // Sequentially wait
+    let mut responses = Vec::new();
+
+    for future in server_futures {
+        // Await each future one at a time
+        let response = future.await?;
+        responses.push(response);
+    }
+
+    // Print responses
+    for response in responses {
+        println!("{:?}", response);
+    }
+
+    Ok(())
 }
 
-pub async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+
+async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     println!("Cleaning up client session...");
     
     for &addr in server_addrs {
-        let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
+        let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
         
         let cleanup_request = crate::ms_kpir::ClientCleanupRequest {
             client_id: session.client_id.clone(),
@@ -309,8 +376,9 @@ pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error:
     loop {
         println!("\nChoose operation:");
         println!("1. PIR Query");
-        println!("2. Exit");
-        print!("Enter choice (1,2): ");
+        println!("2. Private Update");
+        println!("3. Exit");
+        print!("Enter choice (1-3): ");
         io::stdout().flush().unwrap();
 
         let mut choice = String::new();
@@ -339,6 +407,39 @@ pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error:
                 }
             },
             "2" => {
+                print!("Enter key to update: ");
+                io::stdout().flush().unwrap();
+                let mut key_input = String::new();
+                io::stdin().read_line(&mut key_input).expect("Failed to read input");
+                let key = key_input.trim();
+
+                // First query to get current value and global index
+                let query_result = execute_pir_query_and_display_results(&session, server_addrs, key).await;
+
+                match query_result {
+                    Ok(res) => {
+                        if let Some((global_idx, current_value, old_entry)) = res {
+                            println!("Current value for key '{}' is '{}' at global index: {}", key, current_value, global_idx);
+                            
+                            print!("Enter new value: ");
+                            io::stdout().flush().unwrap();
+                            let mut new_value_input = String::new();
+                            io::stdin().read_line(&mut new_value_input).expect("Failed to read input");
+                            let new_value = new_value_input.trim();
+
+                            // Execute private update
+                            match execute_private_update(&session, server_addrs, global_idx, &old_entry, key, new_value).await {
+                                Ok(_) => println!("Successfully updated value for key '{}'", key),
+                                Err(e) => eprintln!("Error during private update: {}", e),
+                            }
+                        } else {
+                            println!("Cannot update: Key not found in the DB");
+                        }
+                    },
+                    Err(e) => eprintln!("Error during query: {}", e),
+                }
+            },
+            "3" => {
                 println!("Cleaning up client session before exit...");
                 if let Err(e) = cleanup_client_session(&session, server_addrs).await {
                     eprintln!("Error during cleanup: {}", e);
@@ -346,7 +447,7 @@ pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error:
                 println!("Exiting client...");
                 break;
             },
-            _ => println!("Invalid choice. Please enter 1 or 2."),
+            _ => println!("Invalid choice. Please enter 1, 2, or 3."),
         }
     }
 
