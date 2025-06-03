@@ -467,7 +467,7 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
     
     // Generate 2 random keys for testing
-    let test_keys = generate_random_keys(2, session.num_buckets, session.bucket_size);
+    let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for (group_idx, addr_chunk) in DEFAULT_SERVERS.chunks(2).enumerate() {
         for (server_idx, &addr) in addr_chunk.iter().enumerate() {

@@ -1247,24 +1247,18 @@ pub fn dmpf_pir_query_eval<const ENTRY_U64_SIZE: usize>(
     println!("Server {} starting evaluation...", server_id);
     let start = Instant::now();
 
-    let precompute_start = Instant::now();
-    let precomputed_seeds_cache: Vec<_> = server_keys.iter()
-        .map(|key| dpf_eval_full_optimized(server_id as u8, key, hs_key, aes))
-        .collect();
-    let precompute_duration = precompute_start.elapsed();
-    println!("Server {} precomputation took: {:?}", server_id, precompute_duration);
-
     // Preallocate the results vector
     let mut collected_results = vec![[0i64; ENTRY_U64_SIZE]; num_buckets];
 
     // Process buckets in parallel with mutable access
     collected_results.par_iter_mut().enumerate().for_each(|(bucket_idx, bucket_result)| {
             let bucket_start_idx = bucket_idx * bucket_size;
+            let key = &server_keys[bucket_idx];
 
             // Precompute seeds for the current key
             // let precomputed_seeds =
             // dpf_full_eval_precompute_parallel_full_final_step(key, hs_key, aes);
-            let precomputed_seeds = &precomputed_seeds_cache[bucket_idx];
+            let precomputed_seeds = dpf_eval_full_optimized(server_id as u8, key, hs_key, aes);
 
             // Inner loop over DB entries in the bucket
             for local_idx in 0..bucket_size {
@@ -1325,23 +1319,17 @@ pub fn dmpf_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
     println!("Server {} starting evaluation...", server_id);
     let start = Instant::now();
 
-    let precompute_start = Instant::now();
-    let precomputed_seeds_cache: Vec<_> = server_keys.iter()
-        .map(|key| dpf_eval_full_optimized(server_id as u8, key, hs_key, aes))
-        .collect();
-    let precompute_duration = precompute_start.elapsed();
-    println!("Server {} precomputation took: {:?}", server_id, precompute_duration);
-
     // Preallocate the results vector
     let mut collected_results = vec![[0i64; ENTRY_U64_SIZE]; num_buckets];
 
     // Process buckets in parallel with mutable access
     collected_results.par_iter_mut().enumerate().for_each(|(bucket_idx, bucket_result)| {
             let bucket_start_idx = bucket_idx * bucket_size;
+            let key = &server_keys[bucket_idx];
             // Precompute seeds for the current key
             // let precomputed_seeds =
             // dpf_full_eval_precompute_parallel_full_final_step(key, hs_key, aes);
-            let precomputed_seeds = &precomputed_seeds_cache[bucket_idx];
+            let precomputed_seeds = dpf_eval_full_optimized(server_id as u8, key, hs_key, aes);
 
             // Inner loop over DB entries in the bucket
             for local_idx in 0..bucket_size {

@@ -3,10 +3,7 @@ use rand::Rng;
 use tonic::Request;
 use async_stream::stream;
 use crate::ms_kpir::{
-    pir_service_client::PirServiceClient,
-    CsvRow,
-    ServerSync,
-    UpdateSingleEntryRequest,
+    pir_service_client::PirServiceClient, CsvRow, ServerSync, SoftDeleteRequest, UpdateSingleEntryRequest
 };
 
 pub async fn run_admin_client(
@@ -137,6 +134,40 @@ pub async fn update_servers(
 
     }
 
+    
+    Ok(())
+}
+
+
+pub async fn soft_delete_entry(
+    key: String,
+    server_addresses: &[String],
+) -> Result<(), Box<dyn Error>> {
+    println!("\n--- Removing key: {} from servers ---", key);
+
+    // First check if we have any server addresses
+    if server_addresses.is_empty() {
+        return Err(Box::<dyn Error>::from("No server addresses provided"));
+    }
+
+    for server_addr in server_addresses{
+        let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
+        println!("Connected to server at {}", server_addr);
+    
+        // Create the CsvRow for the single key-value pair
+        let soft_delete_request = SoftDeleteRequest {
+            key: key.clone()
+        };
+        
+    
+        // Send the update request to the first server
+        println!("Sending update request to server at {}", server_addr);
+        let response = client.soft_delete_entry(Request::new(soft_delete_request)).await?;
+        let response = response.into_inner();
+        
+        println!("Server response: {}", response.message);
+
+    }
     
     Ok(())
 }

@@ -60,6 +60,15 @@ enum AdminAction {
         #[arg(short, long, required = true)]
         value: String,
     },
+    /// Delete a key from servers
+    Delete {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+        /// Key to delete
+        #[arg(short, long, required = true)]
+        key: String,
+    },
 }
 
 async fn run_server(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -92,6 +101,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 AdminAction::Insert { servers, key, value } => {
                     server_admin::update_servers(key, value, &servers).await?;
+                }
+                AdminAction::Delete { servers, key } => {
+                    server_admin::soft_delete_entry(key, &servers).await?;
                 }
             }
         }

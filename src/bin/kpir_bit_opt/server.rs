@@ -16,7 +16,7 @@ use crate::ms_kpir::{
     UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse,
     bit_optimized_pir_service_server::BitOptimizedPirService,
     bit_optimized_pir_service_client::BitOptimizedPirServiceClient,
-    BucketBitOptimizedKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest, CuckooKeys
+    BucketBitOptimizedKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest, CuckooKeys, SoftDeleteRequest
 };
 
 // Import constants from config module
@@ -486,6 +486,23 @@ impl BitOptimizedPirService for MyPIRService {
                 Err(Status::internal(format!("Failed to insert key '{}': {}", key, e)))
             }
         }
+    }
+
+    async fn soft_delete_entry(
+        &self,
+        request: Request<SoftDeleteRequest>,
+    ) -> Result<Response<SyncResponse>, Status> {
+        let soft_delete_request = request.into_inner();
+        let key = soft_delete_request.key;
+        println!("Received delete request for key: {}", key);
+        let mut cuckoo_table = self.cuckoo_table.lock().await;
+        cuckoo_table.soft_delete(&key);
+
+        Ok(Response::new(SyncResponse {
+            success: true,
+            message: format!("Successfully soft deleted key '{}'", key),
+        }))
+        
     }
 
     async fn init_client_session(

@@ -83,6 +83,9 @@ cargo run --release --bin kpir admin init -s <server1> <server2> -f <csv_file>
 
 # Insert a new key-value pair
 cargo run --release --bin kpir admin insert -s <server1> <server2> -k <key> -v <value>
+
+# Delete a key from servers
+cargo run --release --bin kpir admin delete -s <server1> <server2> -k <key>
 ```
 
 ### Example Usage
@@ -109,7 +112,13 @@ cargo run --release --bin kpir admin init -s 127.0.0.1:50051 127.0.0.1:50052 -f 
 cargo run --release --bin kpir admin insert -s 127.0.0.1:50051 127.0.0.1:50052 -k "new_key" -v "new_value"
 ```
 
-4. Run the client to query data:
+4. (Optional) Delete a key:
+
+```bash
+cargo run --release --bin kpir admin delete -s 127.0.0.1:50051 127.0.0.1:50052 -k "new_key"
+```
+
+5. Run the client to query data:
 
 ```bash
 cargo run --release --bin kpir client -s 127.0.0.1:50051 127.0.0.1:50052
@@ -181,6 +190,9 @@ cargo run --release --bin kpir_bit_opt admin init -s <server1> <server2> -f <csv
 
 # Insert a new key-value pair
 cargo run --release --bin kpir_bit_opt admin insert -s <server1> <server2> -k <key> -v <value>
+
+# Delete a key from servers
+cargo run --release --bin kpir_bit_opt admin delete -s <server1> <server2> -k <key>
 ```
 
 ### Example Usage
@@ -207,7 +219,13 @@ cargo run --release --bin kpir_bit_opt admin init -s 127.0.0.1:50051 127.0.0.1:5
 cargo run --release --bin kpir_bit_opt admin insert -s 127.0.0.1:50051 127.0.0.1:50052 -k "new_key" -v "new_value"
 ```
 
-4. Run the client to query data:
+4. (Optional) Delete a key:
+
+```bash
+cargo run --release --bin kpir_bit_opt admin delete -s 127.0.0.1:50051 127.0.0.1:50052 -k "new_key"
+```
+
+5. Run the client to query data:
 
 ```bash
 cargo run --release --bin kpir_bit_opt client -s 127.0.0.1:50051 127.0.0.1:50052
