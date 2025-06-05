@@ -515,7 +515,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
         let mut current_entry_data = encode_entry::<N>(&key, &value)?;
         let mut current_key = key.clone();
 
-        
         // // First check if key already exists and update it if found
         let potential_indices = self.get_hierarchical_indices(&current_key);
         for &index in &potential_indices {
@@ -533,8 +532,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 }
             }
         }
-
-
 
         let mut displacement_path: Vec<(usize, Entry<N>)> = Vec::new();
         let mut visited: Option<HashSet<(String, usize)>> = None; // Tracks (key, global_index_tried)
@@ -571,11 +568,8 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 
             }
 
-
-
             let evict_global_index = potential_indices[choice_idx_to_evict];
 
-            // This check should ideally be redundant if get_hierarchical_indices is correct
             if evict_global_index >= self.table_size {
                  self.revert_changes(&displacement_path);
                  return Err(CuckooError::InsertionFailed(format!(

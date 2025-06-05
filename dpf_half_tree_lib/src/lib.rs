@@ -1468,15 +1468,23 @@ pub fn dmpf_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
 /// Panics if intermediate floating-point calculations result in non-finite values.
 /// Panics if `bucket_num_option` results in more buckets than database entries.
 pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize, usize, u32) {
+    calculate_pir_config_internal(n, bucket_num_option, bucket_num_option)
+}
+
+fn calculate_pir_config_internal(
+    n: usize, 
+    original_bucket_num_option: usize, 
+    current_bucket_num_option: usize
+) -> (usize, usize, usize, u32) {
     if n == 0 {
         panic!("N must be greater than 0 to calculate PIR configuration.");
     }
 
     // Check if bucket_num_option is a power of 2
-    if bucket_num_option == 0 || (bucket_num_option & (bucket_num_option - 1)) != 0 {
+    if current_bucket_num_option == 0 || (current_bucket_num_option & (current_bucket_num_option - 1)) != 0 {
         panic!(
             "BUCKET_NUM_OPTION ({}) must be a power of 2.",
-            bucket_num_option
+            current_bucket_num_option
         );
     }
 
@@ -1524,10 +1532,10 @@ pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize
     };
 
     // Apply bucket number option multiplier
-    let num_buckets = base_num_buckets.checked_mul(bucket_num_option).unwrap_or_else(|| {
+    let num_buckets = base_num_buckets.checked_mul(current_bucket_num_option).unwrap_or_else(|| {
         panic!(
             "BUCKET_NUM_OPTION ({}) causes overflow when multiplied with base_num_buckets ({})",
-            bucket_num_option, base_num_buckets
+            current_bucket_num_option, base_num_buckets
         )
     });
 
@@ -1546,7 +1554,7 @@ pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize
             "BUCKET_NUM_OPTION ({}) results in too many buckets ({}). \
              Cannot have more buckets than database entries ({}). \
              Valid power-of-2 BUCKET_NUM_OPTION values for N={} are: {}",
-            bucket_num_option,
+            current_bucket_num_option,
             num_buckets,
             db_size,
             n,
@@ -1564,14 +1572,138 @@ pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize
             "BUCKET_NUM_OPTION ({}) results in bucket_size ({}) that is not a power of 2. \
              This occurs when num_buckets ({}) doesn't divide db_size ({}) into power-of-2 chunks. \
              Try a different BUCKET_NUM_OPTION value.",
-            bucket_num_option, bucket_size, num_buckets, db_size
+            current_bucket_num_option, bucket_size, num_buckets, db_size
         );
+    }
+
+    // Check if num_buckets is less than 6, and retry with next power of 2 if so
+    if num_buckets < 6 {
+        let next_bucket_num_option = current_bucket_num_option * 2;
+        
+        // Prevent infinite recursion by checking if we've exceeded reasonable bounds
+        if next_bucket_num_option > db_size {
+            panic!(
+                "Cannot achieve num_buckets >= 6 for N={}. \
+                 Started with BUCKET_NUM_OPTION={}, but even with maximum feasible option, \
+                 num_buckets ({}) remains less than 6.",
+                n, original_bucket_num_option, num_buckets
+            );
+        }
+        
+        return calculate_pir_config_internal(n, original_bucket_num_option, next_bucket_num_option);
     }
 
     let bucket_bits = bucket_size.ilog2(); // log2 of bucket_size
 
     (db_size, num_buckets, bucket_size, bucket_bits)
 }
+
+
+// pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize, usize, u32) {
+//     if n == 0 {
+//         panic!("N must be greater than 0 to calculate PIR configuration.");
+//     }
+
+//     // Check if bucket_num_option is a power of 2
+//     if bucket_num_option == 0 || (bucket_num_option & (bucket_num_option - 1)) != 0 {
+//         panic!(
+//             "BUCKET_NUM_OPTION ({}) must be a power of 2.",
+//             bucket_num_option
+//         );
+//     }
+
+//     // Calculate DB_SIZE, checking for potential overflow if n is very large
+//     let db_size = 1usize.checked_shl(n as u32).unwrap_or_else(|| {
+//         panic!("N ({}) is too large, 1 << N overflowed usize", n)
+//     });
+
+//     // Calculate the constraint threshold
+//     let sqrt_db_size = (db_size as f64).sqrt();
+//     if !sqrt_db_size.is_finite() {
+//         panic!(
+//             "Square root calculation resulted in non-finite value for N={}",
+//             n
+//         );
+//     }
+//     let sqrt_db_floor = sqrt_db_size.floor();
+
+//     // Calculate the maximum allowed value for k (NUM_BUCKETS) based on the formula
+//     // k * N <= floor(sqrt(DB_SIZE))  => k <= floor(sqrt(DB_SIZE)) / N
+//     let max_k_float = sqrt_db_floor / (n as f64);
+//     if !max_k_float.is_finite() {
+//         panic!("Max k calculation resulted in non-finite value for N={}", n);
+//     }
+
+//     // We need the largest *power of 2* for NUM_BUCKETS that is <= max_k_float
+//     let max_k_allowed = max_k_float.floor() as usize;
+
+//     let base_num_buckets = if max_k_allowed == 0 {
+//         // If even k=1 doesn't satisfy the condition (or N is huge),
+//         // the largest power of 2 <= 0 doesn't make sense.
+//         // Default to 1 bucket, as it's the smallest possible power-of-2 division.
+//         if (n as f64) > sqrt_db_floor {
+//             println!(
+//                 "Warning: For N={}, even 1 bucket violates the condition ({} > {}). \
+//                  Defaulting to 1 bucket anyway.",
+//                 n, n, sqrt_db_floor
+//             );
+//         }
+//         1 // Smallest power-of-2 division
+//     } else {
+//         // Find the greatest power of 2 less than or equal to max_k_allowed.
+//         // Equivalent to 2^(floor(log2(max_k_allowed)))
+//         1usize << max_k_allowed.ilog2()
+//     };
+
+//     // Apply bucket number option multiplier
+//     let num_buckets = base_num_buckets.checked_mul(bucket_num_option).unwrap_or_else(|| {
+//         panic!(
+//             "BUCKET_NUM_OPTION ({}) causes overflow when multiplied with base_num_buckets ({})",
+//             bucket_num_option, base_num_buckets
+//         )
+//     });
+
+//     // Check feasibility: number of buckets cannot exceed database size
+//     if num_buckets > db_size {
+//          // Calculate valid power-of-2 BUCKET_NUM_OPTION values
+//         let max_feasible_option = db_size / base_num_buckets;
+//         let mut valid_options = Vec::new();
+//         let mut option = 1;
+//         while option <= max_feasible_option {
+//             valid_options.push(option.to_string());
+//             option *= 2;
+//         }
+
+//         panic!(
+//             "BUCKET_NUM_OPTION ({}) results in too many buckets ({}). \
+//              Cannot have more buckets than database entries ({}). \
+//              Valid power-of-2 BUCKET_NUM_OPTION values for N={} are: {}",
+//             bucket_num_option,
+//             num_buckets,
+//             db_size,
+//             n,
+//             valid_options.join(", ")
+//         );
+//     }
+
+//     // Calculate BUCKET_SIZE. Since num_buckets and db_size are powers of 2,
+//     // bucket_size will also be a power of 2 if num_buckets <= db_size.
+//     let bucket_size = db_size / num_buckets;
+    
+//     // Check that bucket_size is a power of 2 (required for efficient operations)
+//     if bucket_size == 0 || (bucket_size & (bucket_size - 1)) != 0 {
+//         panic!(
+//             "BUCKET_NUM_OPTION ({}) results in bucket_size ({}) that is not a power of 2. \
+//              This occurs when num_buckets ({}) doesn't divide db_size ({}) into power-of-2 chunks. \
+//              Try a different BUCKET_NUM_OPTION value.",
+//             bucket_num_option, bucket_size, num_buckets, db_size
+//         );
+//     }
+
+//     let bucket_bits = bucket_size.ilog2(); // log2 of bucket_size
+
+//     (db_size, num_buckets, bucket_size, bucket_bits)
+// }
 
 
 /// Precomputes the state after the main loop for all 2^(n-1) paths using Rayon.
