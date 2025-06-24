@@ -48,6 +48,21 @@ enum AdminAction {
         #[arg(short, long, required = true)]
         file: String,
     },
+    /// Updates a new key-value pair
+    Update {
+        /// Server addresses to connect to
+        #[arg(short, long, num_args = 1.., required = true)]
+        servers: Vec<String>,
+        /// Key to update
+        #[arg(short, long, required = true)]
+        key: String,
+        /// Value to update to
+        #[arg(short, long, required = true)]
+        value: String,
+        /// Insert if missing; otherwise, update the existing key
+        #[arg(long = "upsert")]
+        upsert: bool,
+    },
     /// Insert a new key-value pair
     Insert {
         /// Server addresses to connect to
@@ -100,7 +115,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     server_admin::run_admin_client(&file, &servers).await?;
                 }
                 AdminAction::Insert { servers, key, value } => {
-                    server_admin::update_servers(key, value, &servers).await?;
+                    server_admin::insert_servers(key, value, &servers).await?;
+                }
+                AdminAction::Update { servers, key, value, upsert} => {
+                    server_admin::update_servers(key, value, &servers, upsert).await?;
                 }
                 AdminAction::Delete { servers, key } => {
                     server_admin::soft_delete_entry(key, &servers).await?;

@@ -43,6 +43,13 @@ message ClientSessionInitResponse {
 message UpdateSingleEntryRequest {
   CsvRow csv_row = 1;
   bytes deterministic_eviction_seed = 2;
+  bool upsert = 3;
+}
+
+// Message for single entry insert that includes the CSV row and server addresses
+message InsertSingleEntryRequest {
+  CsvRow csv_row = 1;
+  bytes deterministic_eviction_seed = 2;
 }
 
 message SoftDeleteRequest {
@@ -187,6 +194,9 @@ service PIRService {
   // Update a single entry in the Cuckoo hash table
   rpc UpdateSingleEntry(UpdateSingleEntryRequest) returns (SyncResponse);
 
+  // Insert a single entry in the Cuckoo hash table
+  rpc InsertSingleEntry(InsertSingleEntryRequest) returns (SyncResponse);
+
   rpc SoftDeleteEntry(SoftDeleteRequest) returns (SyncResponse);
   
   // Client session initialization
@@ -243,6 +253,9 @@ service BitOptimizedPIRService {
 
   // Update a single entry in the Cuckoo hash table
   rpc UpdateSingleEntry(UpdateSingleEntryRequest) returns (SyncResponse);
+
+  // Insert a single entry in the Cuckoo hash table
+  rpc InsertSingleEntry(InsertSingleEntryRequest) returns (SyncResponse);
 
   rpc SoftDeleteEntry(SoftDeleteRequest) returns (SyncResponse);
   

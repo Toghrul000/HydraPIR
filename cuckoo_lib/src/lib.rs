@@ -31,6 +31,7 @@ pub enum CuckooError {
     DecodingError(String),
     InsertionFailed(String),
     RehashFailed(String),
+    KeyNotFound(String),
 }
 
 impl fmt::Display for CuckooError {
@@ -40,6 +41,7 @@ impl fmt::Display for CuckooError {
             CuckooError::DecodingError(msg) => write!(f, "Decoding error: {}", msg),
             CuckooError::InsertionFailed(msg) => write!(f, "Insertion failed: {}", msg),
             CuckooError::RehashFailed(msg) => write!(f, "Rehash failed: {}", msg),
+            CuckooError::KeyNotFound(msg) => write!(f, "Key not found: {}", msg),
         }
     }
 }
@@ -501,6 +503,38 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 }
             }
         }
+    }
+
+    /// Updates the value for an existing key.
+    /// Returns an error if the key does not exist.
+    pub fn update(
+        &mut self,
+        key: String,
+        value: String,
+        _deterministic_eviction_seed: Option<&[u8; 16]>,
+    ) -> Result<(), CuckooError> {
+        let EMPTY_SLOT_N: Entry<N> = [0u64; N];
+        let current_entry_data = encode_entry::<N>(&key, &value)?;
+        let current_key = key.clone();
+
+        let potential_indices = self.get_hierarchical_indices(&current_key);
+        for &index in &potential_indices {
+            if index >= self.table_size { continue; } // Safety check
+            if self.table[index] != EMPTY_SLOT_N {
+                match decode_entry(&self.table[index])? {
+                    Some((stored_key, _)) => {
+                        if stored_key == key {
+                            // Found existing entry with same key, update it
+                            self.table[index] = current_entry_data;
+                            return Ok(());
+                        }
+                    }
+                    None => continue,
+                }
+            }
+        }
+
+        Err(CuckooError::KeyNotFound(key)) // You'll need to define this error variant if not already
     }
 
 

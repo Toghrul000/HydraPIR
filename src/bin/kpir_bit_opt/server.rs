@@ -13,11 +13,12 @@ use aes::cipher::{KeyInit, generic_array::GenericArray};
 
 use crate::ms_kpir::{
     CsvRow, ServerSync, SyncResponse, ByteArrayEntry, ConfigData,
-    UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse,
-    bit_optimized_pir_service_server::BitOptimizedPirService,
-    bit_optimized_pir_service_client::BitOptimizedPirServiceClient,
+    UpdateSingleEntryRequest, ClientSessionInitRequest, ClientSessionInitResponse, InsertSingleEntryRequest,
     BucketBitOptimizedKeys, ServerResponse, BucketEvalResult, ClientCleanupRequest, CuckooKeys, SoftDeleteRequest
 };
+
+use crate::ms_kpir::bit_optimized_pir_service_server::BitOptimizedPirService;
+use crate::ms_kpir::bit_optimized_pir_service_client::BitOptimizedPirServiceClient;
 
 // Import constants from config module
 use kpir::config::{
@@ -467,23 +468,65 @@ impl BitOptimizedPirService for MyPIRService {
         
         let key = csv_row.key;
         let value = csv_row.value;
+        let upsert_flag = update_request.upsert;
         
         println!("Received update request for key: {}", key);
         
         let mut cuckoo_table = self.cuckoo_table.lock().await;
         
-        match cuckoo_table.insert_tracked_update_checked(key.clone(), value, Some(&seed)) {
+        let result = if upsert_flag {
+            cuckoo_table.insert_tracked_update_checked(key.clone(), value, Some(&seed))
+        } else {
+            cuckoo_table.update(key.clone(), value, Some(&seed))
+        };
+    
+        match result {
             Ok(_) => {
-                println!("Successfully inserted key '{}'", key);
-
+                println!("Successfully processed key '{}'", key);
                 Ok(Response::new(SyncResponse {
                     success: true,
-                    message: format!("Successfully inserted key '{}'", key),
+                    message: format!("Successfully processed key '{}'", key),
                 }))
-            },
+            }
             Err(e) => {
-                eprintln!("Failed to insert key '{}': {}", key, e);
-                Err(Status::internal(format!("Failed to insert key '{}': {}", key, e)))
+                eprintln!("Failed to process key '{}': {}", key, e);
+                Err(Status::internal(format!("Failed to process key '{}': {}", key, e)))
+            }
+        }
+    }
+
+    async fn insert_single_entry(
+        &self,
+        request: Request<InsertSingleEntryRequest>,
+    ) -> Result<Response<SyncResponse>, Status> {
+        let insert_request = request.into_inner();
+        
+        // Unwrap the CsvRow since it's an Option in the generated Rust code
+        let csv_row = match insert_request.csv_row {
+            Some(row) => row,
+            None => return Err(Status::invalid_argument("Missing CSV row data")),
+        };
+        
+        let seed: [u8; 16] = insert_request.deterministic_eviction_seed.try_into().unwrap();
+        
+        let key = csv_row.key;
+        let value = csv_row.value;
+        
+        println!("Received update request for key: {}", key);
+        
+        let mut cuckoo_table = self.cuckoo_table.lock().await;
+    
+        match cuckoo_table.insert_tracked(key.clone(), value, Some(&seed)) {
+            Ok(_) => {
+                println!("Successfully processed key '{}'", key);
+                Ok(Response::new(SyncResponse {
+                    success: true,
+                    message: format!("Successfully processed key '{}'", key),
+                }))
+            }
+            Err(e) => {
+                eprintln!("Failed to process key '{}': {}", key, e);
+                Err(Status::internal(format!("Failed to process key '{}': {}", key, e)))
             }
         }
     }
