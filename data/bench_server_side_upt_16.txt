@@ -1,0 +1,72 @@
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 8ae49949-1476-41d1-aa72-6248bd17339e
+PIR parameters: num_buckets=16, bucket_size=4096, bucket_bits=12, k_choices=6
+Update Servers (upsert=false)/server_0_update/key972
+                        time:   [503.07 µs 516.33 µs 529.73 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Update Servers (upsert=false)/server_0_update/key31103
+                        time:   [488.25 µs 493.94 µs 500.65 µs]
+Found 12 outliers among 100 measurements (12.00%)
+  8 (8.00%) high mild
+  4 (4.00%) high severe
+Update Servers (upsert=false)/server_0_update/key37924
+                        time:   [491.23 µs 497.10 µs 503.48 µs]
+Found 13 outliers among 100 measurements (13.00%)
+  8 (8.00%) high mild
+  5 (5.00%) high severe
+Update Servers (upsert=false)/server_1_update/key972
+                        time:   [488.67 µs 495.63 µs 504.07 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+Update Servers (upsert=false)/server_1_update/key31103
+                        time:   [503.37 µs 511.73 µs 520.98 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Update Servers (upsert=false)/server_1_update/key37924
+                        time:   [491.52 µs 498.70 µs 507.01 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 3bfe5d68-4bb5-459b-9801-c216cfe67f2d
+PIR parameters: num_buckets=16, bucket_size=4096, bucket_bits=12, k_choices=6
+Soft Delete Entry/server_0_soft_delete/key33016
+                        time:   [486.15 µs 492.18 µs 498.77 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+Soft Delete Entry/server_0_soft_delete/key41195
+                        time:   [489.67 µs 497.03 µs 505.43 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+Soft Delete Entry/server_0_soft_delete/key55020
+                        time:   [498.14 µs 507.55 µs 518.45 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  5 (5.00%) high mild
+  5 (5.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key33016
+                        time:   [487.91 µs 496.18 µs 506.38 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  5 (5.00%) high mild
+  5 (5.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key41195
+                        time:   [502.40 µs 512.18 µs 522.11 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  8 (8.00%) high mild
+  2 (2.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key55020
+                        time:   [487.95 µs 494.91 µs 502.93 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+

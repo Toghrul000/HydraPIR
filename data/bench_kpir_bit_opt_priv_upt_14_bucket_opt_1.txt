@@ -1,0 +1,67 @@
+Initialized session with server at 127.0.0.1:50051
+Initialized session with server at 127.0.0.1:50052
+Initialized session with server at 127.0.0.1:50053
+Initialized session with server at 127.0.0.1:50054
+Client session initialized with ID: 0997fd7a-4935-4d8e-a9b2-cae8c5825a27
+PIR parameters: num_buckets=8, bucket_size=2048, bucket_bits=11, k_choices=6
+Generating DPF keys per bucket...
+  No target points in bucket 0. Generating zero function keys.
+  No target points in bucket 1. Generating zero function keys.
+  Found point 5659 in bucket 2 (local index 1563)
+  No target points in bucket 3. Generating zero function keys.
+  No target points in bucket 4. Generating zero function keys.
+  No target points in bucket 5. Generating zero function keys.
+  No target points in bucket 6. Generating zero function keys.
+  No target points in bucket 7. Generating zero function keys.
+DPF key generation complete.
+Individual Server Private Update/server_0_0_private_update/key9534
+                        time:   [243.58 ms 245.27 ms 247.19 ms]
+Found 17 outliers among 100 measurements (17.00%)
+  6 (6.00%) high mild
+  11 (11.00%) high severe
+Individual Server Private Update/server_0_0_private_update/key5999
+                        time:   [241.41 ms 242.05 ms 243.03 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high severe
+Individual Server Private Update/server_0_0_private_update/key3894
+                        time:   [241.15 ms 241.50 ms 241.84 ms]
+Individual Server Private Update/server_0_1_private_update/key9534
+                        time:   [241.17 ms 241.50 ms 241.84 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Individual Server Private Update/server_0_1_private_update/key5999
+                        time:   [241.43 ms 241.75 ms 242.09 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Individual Server Private Update/server_0_1_private_update/key3894
+                        time:   [240.99 ms 241.43 ms 241.89 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Individual Server Private Update/server_1_0_private_update/key9534
+                        time:   [250.26 ms 252.95 ms 255.93 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Individual Server Private Update/server_1_0_private_update/key5999
+                        time:   [253.91 ms 254.86 ms 255.84 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Individual Server Private Update/server_1_0_private_update/key3894
+                        time:   [255.71 ms 256.36 ms 256.99 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) low mild
+  1 (1.00%) high mild
+Individual Server Private Update/server_1_1_private_update/key9534
+                        time:   [259.90 ms 260.74 ms 261.62 ms]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+Individual Server Private Update/server_1_1_private_update/key5999
+                        time:   [254.60 ms 255.46 ms 256.33 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Individual Server Private Update/server_1_1_private_update/key3894
+                        time:   [250.79 ms 252.10 ms 253.49 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+

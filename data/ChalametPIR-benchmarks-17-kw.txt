@@ -1,0 +1,71 @@
+��WARNING: HTML report generation will become a non-default optional feature in Criterion.rs 0.4.0.
+This feature is being moved to cargo-criterion (https://github.com/bheisler/cargo-criterion) and will be optional in a future version of Criterion.rs. To silence this warning, either switch to cargo-criterion or enable the 'html_reports' feature in your Cargo.toml.
+
+Gnuplot not found, using plotters backend
+Chosen parameters are: m: 131072, lwe_dim: 1774, elem_size: 245760, plaintext-bits: 10
+Benchmarking offline: true
+Benchmarking keyword: true
+Setting up DB for benchmarking. This might take a while...
+[KV] Setup complete, starting benchmarks...
+[KV] Benchmarking online steps...
+[KV] Filter Params: segment-len: 4096, segment-len-mask: 4095, segment-count-len: 147456
+[KV] Starting client query benchmarks
+Benchmarking lwe/[KV] create client query params, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+Benchmarking lwe/[KV] create client query params, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 1105.1s, or reduce sample count to 10.
+Benchmarking lwe/[KV] create client query params, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Collecting 100 samples in estimated 1105.1 s (100 iterations)
+Benchmarking lwe/[KV] create client query params, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Analyzing
+lwe/[KV] create client query params, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+                        time:   [138.13 ms 139.06 ms 140.11 ms]
+Found 12 outliers among 100 measurements (12.00%)
+  6 (6.00%) high mild
+  6 (6.00%) high severe
+Benchmarking lwe/[KV] create client query prepare, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+Benchmarking lwe/[KV] create client query prepare, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Warming up for 3.0000 s
+Benchmarking lwe/[KV] create client query prepare, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Collecting 100 samples in estimated 5.2715 s (1900 iterations)
+Benchmarking lwe/[KV] create client query prepare, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Analyzing
+lwe/[KV] create client query prepare, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+                        time:   [2.7086 ms 2.7213 ms 2.7350 ms]
+                        change: [+99.425% +118.56% +140.13%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Benchmarking lwe/[KV] server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+Benchmarking lwe/[KV] server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6573.2s, or reduce sample count to 10.
+Benchmarking lwe/[KV] server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Collecting 100 samples in estimated 6573.2 s (100 iterations)
+Benchmarking lwe/[KV] server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Analyzing
+lwe/[KV] server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+                        time:   [49.507 s 85.598 s 156.35 s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+Benchmarking lwe/[KV] client parse server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+Benchmarking lwe/[KV] client parse server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Warming up for 3.0000 s
+Benchmarking lwe/[KV] client parse server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Collecting 100 samples in estimated 5.7095 s (300 iterations)
+Benchmarking lwe/[KV] client parse server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576: Analyzing
+lwe/[KV] client parse server response, lwe_dim: 1774, matrix_height: 155648, omega: 24576
+                        time:   [18.563 ms 18.712 ms 18.896 ms]
+                        change: [-78.573% -77.558% -76.576%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+[KV] Finished client query benchmarks
+[KV] Benchmarking offline steps...
+Benchmarking lwe/[KV] derive LHS from seed, lwe_dim: 1774, m: 155648, w: 24576
+Benchmarking lwe/[KV] derive LHS from seed, lwe_dim: 1774, m: 155648, w: 24576: Warming up for 3.0000 s
+Benchmarking lwe/[KV] derive LHS from seed, lwe_dim: 1774, m: 155648, w: 24576: Collecting 10 samples in estimated 156.37 s (20 iterations)
+Benchmarking lwe/[KV] derive LHS from seed, lwe_dim: 1774, m: 155648, w: 24576: Analyzing
+lwe/[KV] derive LHS from seed, lwe_dim: 1774, m: 155648, w: 24576
+                        time:   [3.2693 s 3.2985 s 3.3275 s]
+[KV] Starting DB generation benchmarks
+Benchmarking lwe/[KV] generate db and params, m: 155648, w: 24576
+Benchmarking lwe/[KV] generate db and params, m: 155648, w: 24576: Warming up for 3.0000 s
+
+memory allocation of 4456464 bytes failed
+error: bench failed, to rerun pass `--bench bench`
+
+Caused by:
+  process didn't exit successfully: `C:\Users\togru\Documents\chalamet\target\release\deps\bench-777a8b2ee947897e.exe --bench` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)

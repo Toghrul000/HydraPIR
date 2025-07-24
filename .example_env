@@ -1,0 +1,44 @@
+# KPIR Configurations
+
+# Cuckoo insert rehash loop configuration
+# Maximum number of rehash attempts before you increase number of hash functions
+KPIR_MAX_REHASH_ATTEMPTS=2
+# The number of times you want to increase generated bucket nums for DB size.
+BUCKET_NUM_OPTION=1
+
+# 2^20 * 256 B entries
+KPIR_STORAGE_MB=256
+KPIR_ENTRY_SIZE_BYTES=256
+
+# 2^20 * 256 B entries
+# KPIR_STORAGE_MB=128
+# KPIR_ENTRY_SIZE_BYTES=256
+
+# # 2^17 * 30kB entries
+# KPIR_STORAGE_MB=3840
+# KPIR_ENTRY_SIZE_BYTES=30720
+
+# # 2^16 * 30kB entries
+# KPIR_STORAGE_MB=1920
+# KPIR_ENTRY_SIZE_BYTES=30720
+
+# # 2^14 * 100kB entries
+# KPIR_STORAGE_MB=2048
+# KPIR_ENTRY_SIZE_BYTES=102400
+
+# # 2^22 * 256 B entries
+# KPIR_STORAGE_MB=1024
+# KPIR_ENTRY_SIZE_BYTES=256
+
+######### PRACTICAL TESTS
+# # 2^20 * 384 B entries for 2^20 * email_hash, ecc 256 bit key size public key
+# KPIR_STORAGE_MB=384
+# KPIR_ENTRY_SIZE_BYTES=384
+
+# # 2^19 * 928 B entries for 2^19 * email_hash, rsa 2048 bit key size public key
+# KPIR_STORAGE_MB=464
+# KPIR_ENTRY_SIZE_BYTES=928
+
+# # 2^17 * 1616 B entries for email_hash, rsa 4096 bit key size public key
+# KPIR_STORAGE_MB=202
+# KPIR_ENTRY_SIZE_BYTES=1616

@@ -1,0 +1,88 @@
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 859d3a87-2a49-408e-8098-d6be192047cb
+PIR parameters: num_buckets=32, bucket_size=32768, bucket_bits=15, k_choices=6
+Update Servers (upsert=false)/server_0_update/key297652
+                        time:   [455.17 µs 462.61 µs 471.79 µs]
+Found 13 outliers among 100 measurements (13.00%)
+  9 (9.00%) high mild
+  4 (4.00%) high severe
+Update Servers (upsert=false)/server_0_update/key498894
+                        time:   [461.78 µs 465.49 µs 469.34 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Update Servers (upsert=false)/server_0_update/key324844
+                        time:   [455.00 µs 459.06 µs 463.81 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Update Servers (upsert=false)/server_1_update/key297652
+                        time:   [462.96 µs 470.70 µs 479.31 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+Update Servers (upsert=false)/server_1_update/key498894
+                        time:   [475.53 µs 489.43 µs 505.88 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Update Servers (upsert=false)/server_1_update/key324844
+                        time:   [460.31 µs 466.77 µs 474.39 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 1db8eb64-cf4e-4fdf-9813-3fe8d33c5253
+PIR parameters: num_buckets=32, bucket_size=32768, bucket_bits=15, k_choices=6
+Soft Delete Entry/server_0_soft_delete/key762512
+                        time:   [453.89 µs 459.49 µs 465.76 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  9 (9.00%) high mild
+  1 (1.00%) high severe
+Soft Delete Entry/server_0_soft_delete/key169529
+                        time:   [451.43 µs 456.69 µs 462.29 µs]
+Found 13 outliers among 100 measurements (13.00%)
+  9 (9.00%) high mild
+  4 (4.00%) high severe
+Soft Delete Entry/server_0_soft_delete/key221919
+                        time:   [458.14 µs 464.58 µs 471.72 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key762512
+                        time:   [455.85 µs 462.16 µs 469.14 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  2 (2.00%) high mild
+  7 (7.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key169529
+                        time:   [453.81 µs 460.57 µs 468.26 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Soft Delete Entry/server_1_soft_delete/key221919
+                        time:   [455.21 µs 464.39 µs 475.12 µs]
+Found 11 outliers among 100 measurements (11.00%)
+  5 (5.00%) high mild
+  6 (6.00%) high severe
+
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 1d90656d-872d-4dd9-bfc4-b1d26a2eaa52
+PIR parameters: num_buckets=32, bucket_size=32768, bucket_bits=15, k_choices=6
+Database size: 1048576 entries
+Max insertions (5%): 52428 entries
+Insert Servers/server_0_insert
+                        time:   [474.37 µs 517.97 µs 542.51 µs]
+                        change: [+5.4983% +11.309% +17.140%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Insert Servers/server_1_insert
+                        time:   [473.34 µs 502.11 µs 521.46 µs]
+                        change: [-1.6358% +5.9662% +12.398%] (p = 0.14 > 0.05)
+                        No change in performance detected.
+

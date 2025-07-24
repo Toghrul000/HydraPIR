@@ -1,0 +1,74 @@
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: a2a459fa-6170-4eb7-b62a-1e12df4492cc
+PIR parameters: num_buckets=32, bucket_size=4096, bucket_bits=12, k_choices=6
+DPF Key Generation/key_gen/key23416
+                        time:   [13.324 µs 13.446 µs 13.593 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+DPF Key Generation/key_gen/key31017
+                        time:   [13.123 µs 13.184 µs 13.262 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+DPF Key Generation/key_gen/key105784
+                        time:   [13.286 µs 13.382 µs 13.511 µs]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high severe
+
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 179390fe-7541-4a9e-bcbf-bc86029ae01f
+PIR parameters: num_buckets=32, bucket_size=4096, bucket_bits=12, k_choices=6
+Individual Server Response Times/server_0_response/key41686
+                        time:   [129.82 ms 130.14 ms 130.50 ms]
+Found 8 outliers among 100 measurements (8.00%)
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+Individual Server Response Times/server_0_response/key3661
+                        time:   [129.80 ms 130.06 ms 130.34 ms]
+Found 10 outliers among 100 measurements (10.00%)
+  9 (9.00%) high mild
+  1 (1.00%) high severe
+Individual Server Response Times/server_0_response/key7291
+                        time:   [130.30 ms 130.72 ms 131.16 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  7 (7.00%) high mild
+Individual Server Response Times/server_1_response/key41686
+                        time:   [130.70 ms 130.94 ms 131.20 ms]
+Found 8 outliers among 100 measurements (8.00%)
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+Individual Server Response Times/server_1_response/key3661
+                        time:   [130.25 ms 130.49 ms 130.75 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Individual Server Response Times/server_1_response/key7291
+                        time:   [130.74 ms 130.96 ms 131.18 ms]
+Found 9 outliers among 100 measurements (9.00%)
+  8 (8.00%) high mild
+  1 (1.00%) high severe
+
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: dfd3eb44-bbf7-47f5-a49e-ff6975baa91f
+PIR parameters: num_buckets=32, bucket_size=4096, bucket_bits=12, k_choices=6
+Reconstruction Time/reconstruction/key26714
+                        time:   [208.66 µs 210.22 µs 212.20 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Reconstruction Time/reconstruction/key7960
+                        time:   [205.36 µs 206.10 µs 206.88 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Reconstruction Time/reconstruction/key105931
+                        time:   [204.96 µs 205.80 µs 206.80 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  10 (10.00%) high mild
+

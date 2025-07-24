@@ -1,0 +1,75 @@
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 685026db-7ff4-4890-af17-cd7be3087f35
+PIR parameters: num_buckets=16, bucket_size=8192, bucket_bits=13, k_choices=6
+Update Servers (upsert=false)/server_0_update/key80052
+                        time:   [475.73 µs 479.49 µs 483.78 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Update Servers (upsert=false)/server_0_update/key58
+                        time:   [481.02 µs 488.00 µs 496.78 µs]
+Found 13 outliers among 100 measurements (13.00%)
+  6 (6.00%) high mild
+  7 (7.00%) high severe
+Update Servers (upsert=false)/server_0_update/key109039
+                        time:   [498.77 µs 505.49 µs 513.43 µs]
+Found 11 outliers among 100 measurements (11.00%)
+  2 (2.00%) high mild
+  9 (9.00%) high severe
+Update Servers (upsert=false)/server_1_update/key80052
+                        time:   [484.00 µs 489.78 µs 497.10 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  1 (1.00%) low mild
+  2 (2.00%) high mild
+  5 (5.00%) high severe
+Update Servers (upsert=false)/server_1_update/key58
+                        time:   [485.18 µs 490.13 µs 496.02 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+Update Servers (upsert=false)/server_1_update/key109039
+                        time:   [505.72 µs 511.70 µs 518.94 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 already has the same keys as first server, skipping update
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: dee4a184-410c-4b88-b865-d8b43177da1a
+PIR parameters: num_buckets=16, bucket_size=8192, bucket_bits=13, k_choices=6
+Soft Delete Entry/server_0_soft_delete/key107717
+                        time:   [476.08 µs 482.05 µs 489.27 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  2 (2.00%) high mild
+  4 (4.00%) high severe
+Soft Delete Entry/server_0_soft_delete/key78791
+                        time:   [469.64 µs 474.81 µs 480.83 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  4 (4.00%) high mild
+  4 (4.00%) high severe
+Soft Delete Entry/server_0_soft_delete/key108346
+                        time:   [473.04 µs 478.43 µs 484.69 µs]
+Found 9 outliers among 100 measurements (9.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key107717
+                        time:   [471.90 µs 477.39 µs 483.62 µs]
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key78791
+                        time:   [471.34 µs 476.44 µs 482.37 µs]
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) high mild
+  5 (5.00%) high severe
+Soft Delete Entry/server_1_soft_delete/key108346
+                        time:   [523.98 µs 530.03 µs 536.13 µs]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+

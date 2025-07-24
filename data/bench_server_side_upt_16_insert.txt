@@ -1,0 +1,17 @@
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 has different keys than first server, updating...
+Successfully synced Cuckoo keys with server at 127.0.0.1:50052
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: ada6b4d1-0231-44c6-9710-9358f9d55745
+PIR parameters: num_buckets=16, bucket_size=4096, bucket_bits=12, k_choices=6
+Database size: 65536 entries
+Max insertions (5%): 3276 entries
+Insert Servers/server_0_insert
+                        time:   [429.20 µs 432.97 µs 438.20 µs]
+                        change: [-94.650% -94.538% -94.411%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Insert Servers/server_1_insert
+                        time:   [484.82 µs 500.51 µs 533.54 µs]
+                        change: [-93.702% -93.344% -92.986%] (p = 0.00 < 0.05)
+                        Performance has improved.
+

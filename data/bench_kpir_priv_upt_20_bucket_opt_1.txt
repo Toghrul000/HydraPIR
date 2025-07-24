@@ -1,0 +1,85 @@
+Initialized session with server at 127.0.0.1:50051
+Initialized session with server at 127.0.0.1:50052
+Initialized session with server at 127.0.0.1:50053
+Initialized session with server at 127.0.0.1:50054
+Client session initialized with ID: 4299827d-b025-4d65-b3c5-705fb781424d
+PIR parameters: num_buckets=32, bucket_size=32768, bucket_bits=15, k_choices=6
+Generating DPF keys per bucket...
+  No target points in bucket 0. Generating zero function keys.
+  No target points in bucket 1. Generating zero function keys.
+  No target points in bucket 2. Generating zero function keys.
+  No target points in bucket 3. Generating zero function keys.
+  No target points in bucket 4. Generating zero function keys.
+  No target points in bucket 5. Generating zero function keys.
+  No target points in bucket 6. Generating zero function keys.
+  No target points in bucket 7. Generating zero function keys.
+  No target points in bucket 8. Generating zero function keys.
+  No target points in bucket 9. Generating zero function keys.
+  No target points in bucket 10. Generating zero function keys.
+  No target points in bucket 11. Generating zero function keys.
+  No target points in bucket 12. Generating zero function keys.
+  No target points in bucket 13. Generating zero function keys.
+  No target points in bucket 14. Generating zero function keys.
+  No target points in bucket 15. Generating zero function keys.
+  No target points in bucket 16. Generating zero function keys.
+  No target points in bucket 17. Generating zero function keys.
+  No target points in bucket 18. Generating zero function keys.
+  No target points in bucket 19. Generating zero function keys.
+  No target points in bucket 20. Generating zero function keys.
+  No target points in bucket 21. Generating zero function keys.
+  No target points in bucket 22. Generating zero function keys.
+  No target points in bucket 23. Generating zero function keys.
+  No target points in bucket 24. Generating zero function keys.
+  No target points in bucket 25. Generating zero function keys.
+  No target points in bucket 26. Generating zero function keys.
+  No target points in bucket 27. Generating zero function keys.
+  No target points in bucket 28. Generating zero function keys.
+  No target points in bucket 29. Generating zero function keys.
+  No target points in bucket 30. Generating zero function keys.
+  Found point 1034144 in bucket 31 (local index 18336)
+DPF key generation complete.
+Individual Server Private Update/server_0_0_private_update/key754567
+                        time:   [75.486 ms 75.856 ms 76.259 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Individual Server Private Update/server_0_0_private_update/key17265
+                        time:   [74.365 ms 74.589 ms 74.820 ms]
+Individual Server Private Update/server_0_0_private_update/key93134
+                        time:   [75.719 ms 75.871 ms 76.023 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+Individual Server Private Update/server_0_1_private_update/key754567
+                        time:   [75.548 ms 75.702 ms 75.859 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Individual Server Private Update/server_0_1_private_update/key17265
+                        time:   [76.737 ms 77.015 ms 77.315 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Individual Server Private Update/server_0_1_private_update/key93134
+                        time:   [85.145 ms 86.155 ms 87.131 ms]
+Individual Server Private Update/server_1_0_private_update/key754567
+                        time:   [89.561 ms 91.321 ms 93.202 ms]
+Found 10 outliers among 100 measurements (10.00%)
+  10 (10.00%) high mild
+Individual Server Private Update/server_1_0_private_update/key17265
+                        time:   [82.742 ms 84.451 ms 86.234 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Individual Server Private Update/server_1_0_private_update/key93134
+                        time:   [75.891 ms 76.026 ms 76.159 ms]
+Individual Server Private Update/server_1_1_private_update/key754567
+                        time:   [75.790 ms 75.932 ms 76.076 ms]
+Individual Server Private Update/server_1_1_private_update/key17265
+                        time:   [75.934 ms 76.084 ms 76.237 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Individual Server Private Update/server_1_1_private_update/key93134
+                        time:   [78.698 ms 80.012 ms 81.615 ms]
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+

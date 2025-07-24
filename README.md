@@ -353,6 +353,11 @@ For the Bit-Optimized private update scheme:
 cargo bench --bench bit_pir_priv_upt_benchmarks
 ```
 
+For the Bit-Optimized non-private update operations:
+```bash
+cargo bench --bench non_priv_upt_benchmarks
+```
+
 Note: The benchmarks use localhost servers by default:
 
 - Regular PIR scheme: 127.0.0.1:50051 and 127.0.0.1:50052

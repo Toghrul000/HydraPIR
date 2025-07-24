@@ -1,0 +1,15 @@
+Initialized session with server at 127.0.0.1:50051
+Server at 127.0.0.1:50052 has different keys than first server, updating...
+Successfully synced Cuckoo keys with server at 127.0.0.1:50052
+Initialized session with server at 127.0.0.1:50052
+Client session initialized with ID: 91ff6cdb-a895-4c34-a8d5-aae3b230ce6b
+PIR parameters: num_buckets=32, bucket_size=32768, bucket_bits=15, k_choices=6
+Insert Servers/server_0_insert
+                        time:   [432.59 µs 439.93 µs 446.62 µs]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+Insert Servers/server_1_insert
+                        time:   [440.40 µs 443.31 µs 447.84 µs]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+

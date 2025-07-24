@@ -8,7 +8,7 @@ members = [
     "cuckoo_lib",
     "dpf_half_tree_lib",
     "dpf_half_tree_bit_lib"
-    # Add other library or binary directories here if they are direct children
+    # Other library or binary directories can be added here if they are direct children
 ]
 
 [dependencies]
@@ -55,4 +55,12 @@ harness = false
 
 [[bench]]
 name = "bit_pir_priv_upt_benchmarks"
+harness = false
+
+[[bench]]
+name = "bit_pir_practical_benchmarks"
+harness = false
+
+[[bench]]
+name = "non_priv_upt_benchmarks"
 harness = false

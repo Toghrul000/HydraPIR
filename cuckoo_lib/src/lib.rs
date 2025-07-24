@@ -11,8 +11,10 @@ use std::sync::Mutex;
 
 
 // --- Constants related to the Algorithm (can be adjusted here) ---
-const MAX_DISPLACEMENTS: usize = 100;
-const MAX_TRACKED_DISPLACEMENTS: usize = 500;
+// const MAX_DISPLACEMENTS: usize = 100;
+const MAX_DISPLACEMENTS: usize = 500;
+// const MAX_TRACKED_DISPLACEMENTS: usize = 500;
+const MAX_TRACKED_DISPLACEMENTS: usize = 1000;
 // Default number of hashes if not specified otherwise (could also be generic/configurable)
 const DEFAULT_NUM_HASHES: usize = 6;
 // Default number of distinct bucket choices / local hash functions (k)
@@ -274,13 +276,18 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
         let mut bucket_selection_key = [0u8; 16];
         rng.fill_bytes(&mut bucket_selection_key);
 
-        let local_hash_keys = (0..k_choices)
+        let local_hash_keys: Vec<[u8; 16]> = (0..k_choices)
             .map(|_| {
                 let mut key = [0u8; 16];
                 rng.fill_bytes(&mut key);
                 key
             })
             .collect();
+
+        // println!("B key: {:?}", bucket_selection_key);
+        // for i in 0..k_choices {
+        //     println!("K {}: {:?}", i, local_hash_keys[i])
+        // }
 
         Ok(CuckooHashTableBucketed {
             table: vec![[0u64; N]; table_size],

@@ -29,12 +29,10 @@ def calculate_required_table_size(
             f"Warning: calculate_required_table_size called with entry_size_bytes {entry_size_bytes} not multiple of 8. Result might be suboptimal.",
             file=math.stderr,
         )
-        # Proceed anyway, but the user should align ENTRY_SIZE in main
 
-    # Calculate the maximum number of entries that *can* fit
+    # Calculate the maximum number of entries that can fit
     max_entries_possible = total_storage_bytes // entry_size_bytes
 
-    # If no entries can fit, the smallest valid power of 2 size is 1 (2^0)
     if max_entries_possible == 0:
         return (1, 0)
 
@@ -58,11 +56,9 @@ def calculate_pir_config(n: int, bucket_num_option: int) -> tuple[int, int, int,
     if n == 0:
         raise ValueError("N must be greater than 0 to calculate PIR configuration.")
 
-    # Check if bucket_num_option is a power of 2
     if bucket_num_option == 0 or (bucket_num_option & (bucket_num_option - 1)) != 0:
         raise ValueError(f"BUCKET_NUM_OPTION ({bucket_num_option}) must be a power of 2.")
 
-    # Calculate DB_SIZE (1 << n) with overflow check
     try:
         db_size = 1 << n
     except OverflowError:
@@ -127,9 +123,4 @@ print(calculate_required_table_size(3840 * 1024 * 1024, 30720))  # 2^17 * 30kB e
 print(calculate_required_table_size(1920 * 1024 * 1024, 30720))  # 2^16 * 30kB entries
 
 # we need at least around 1,562.5 MB so 2 GB is also good for 2^14 * 100kB entries
-print(
-    calculate_required_table_size(2 * 1024 * 1024 * 1024, 100000)
-)  # 2^14 * 100kB entries
-
-
-print(calculate_pir_config(13, 2))
+print(calculate_required_table_size(2 * 1024 * 1024 * 1024, 100000))  # 2^14 * 100kB entries

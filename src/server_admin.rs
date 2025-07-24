@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, time::Instant};
 use rand::Rng;
 use tonic::Request;
 use async_stream::stream;
@@ -102,6 +102,7 @@ pub async fn update_servers(
     upsert: bool,
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Updating servers with key: {} ---", key);
+   
 
     // First check if we have any server addresses
     if server_addresses.is_empty() {
@@ -113,6 +114,7 @@ pub async fn update_servers(
     for server_addr in server_addresses{
         let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
+        let start = Instant::now();
     
         // Create the CsvRow for the single key-value pair
         let csv_row = CsvRow {
@@ -133,6 +135,11 @@ pub async fn update_servers(
         let response = response.into_inner();
         
         println!("Server response: {}", response.message);
+
+        let duration = start.elapsed();
+        println!("Time taken: {:?}", duration);
+        println!("In milliseconds: {}ms", duration.as_millis());
+        println!("In microseconds: {}µs", duration.as_micros());
 
     }
 
@@ -158,6 +165,7 @@ pub async fn insert_servers(
     for server_addr in server_addresses{
         let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
+        let start = Instant::now();
     
         // Create the CsvRow for the single key-value pair
         let csv_row = CsvRow {
@@ -177,6 +185,10 @@ pub async fn insert_servers(
         let response = response.into_inner();
         
         println!("Server response: {}", response.message);
+        let duration = start.elapsed();
+        println!("Time taken: {:?}", duration);
+        println!("In milliseconds: {}ms", duration.as_millis());
+        println!("In microseconds: {}µs", duration.as_micros());
 
     }
 
@@ -199,6 +211,7 @@ pub async fn soft_delete_entry(
     for server_addr in server_addresses{
         let mut client = PirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
+        let start = Instant::now();
     
         // Create the CsvRow for the single key-value pair
         let soft_delete_request = SoftDeleteRequest {
@@ -212,6 +225,10 @@ pub async fn soft_delete_entry(
         let response = response.into_inner();
         
         println!("Server response: {}", response.message);
+        let duration = start.elapsed();
+        println!("Time taken: {:?}", duration);
+        println!("In milliseconds: {}ms", duration.as_millis());
+        println!("In microseconds: {}µs", duration.as_micros());
 
     }
     
