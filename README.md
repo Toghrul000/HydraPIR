@@ -65,9 +65,29 @@ This project implements four Multi Server Private Information Retrieval (PIR) sc
   The encode/decode functions in `cuckoo_lib` add a 16-byte overhead to each entry.  
   If you set `KPIR_ENTRY_SIZE_BYTES=1024`, your actual key+value in the CSV should be ≤1008 bytes.
 
+## More ENV Configuration parameters
+
+The following environment variables control the behavior of the cuckoo hash table used for storing key-value pairs:
+
+- **`KPIR_MAX_REHASH_ATTEMPTS`:**  
+  Maximum number of rehash attempts before increasing the number of hash functions.  
+  If the dataset does not fit in the cuckoo hash table, the table rehashes with new hash function keys.  
+  If it fails again, it tries repeatedly. This parameter controls how many rehash attempts are made before increasing the number of hash functions and trying again.  
+
+  _Default: 2_
+
+- **`BUCKET_NUM_OPTION`:**  
+  Controls the number of buckets generated for the database size.  
+  - Default value is 1 (normal bucket count)
+  - Set to 2 to double the number of buckets
+  - Set to 4 to quadruple the number of buckets
+  - Must be a power of 2 (1, 2, 4, 8, 16, etc.)
+
+  _Default: 1_
+
 ---
 
-## ⚠️ Compile Time Warning
+## ⚠️ Slow Compile Time
 
 Compile times are slower than normal because the code is optimized for runtime performance.  
 We added flags in `Cargo.toml` for production builds.

@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get environment variables with defaults
     let storage_mb = env::var("KPIR_STORAGE_MB").unwrap_or_else(|_| "256".to_string());
     let entry_size_bytes = env::var("KPIR_ENTRY_SIZE_BYTES").unwrap_or_else(|_| "256".to_string());
-    let max_rehash_attempts = env::var("KPIR_MAX_REHASH_ATTEMPTS").unwrap_or_else(|_| "1".to_string());
+    let max_rehash_attempts = env::var("KPIR_MAX_REHASH_ATTEMPTS").unwrap_or_else(|_| "2".to_string());
     let bucket_num_option = env::var("BUCKET_NUM_OPTION").unwrap_or_else(|_| "1".to_string());
 
     // Calculate a hash of the environment variables to use in the filename
