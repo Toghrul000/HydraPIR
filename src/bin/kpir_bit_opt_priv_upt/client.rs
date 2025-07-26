@@ -1,5 +1,5 @@
 use crate::ms_kpir::bit_optimized_pir_service_private_update_client::BitOptimizedPirServicePrivateUpdateClient;
-use crate::ms_kpir::{dpf_key_bytes, BucketBitOptimizedKeys, ClientSessionInitRequest, BitDpfKey, DpfKeyBytes, PrivUpdateRequest};
+use crate::ms_kpir::{dpf_key_array, BucketBitOptimizedKeys, ClientSessionInitRequest, BitDpfKey, DpfKeyArray, PrivUpdateRequest};
 use crate::ms_kpir::bit_dpf_key;
 use cuckoo_lib::{encode_entry, get_hierarchical_indices, Entry};
 use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_gen, dmpf_bit_pir_reconstruct_servers, dpf_priv_xor_update_gen_buckets};
@@ -260,7 +260,6 @@ async fn execute_private_update(
 
     let target_points = vec![(global_idx as u32, beta)];
 
-    // Generate DPF keys for the update
     let update_keys = dpf_priv_xor_update_gen_buckets::<ENTRY_U64_COUNT>(
         &target_points,
         session.num_buckets as usize,
@@ -270,7 +269,6 @@ async fn execute_private_update(
         &aes,
     );
 
-    // Wrap the keys in Arc for shared ownership
     let update_key_0 = Arc::new(update_keys[0].clone());
     let update_key_1 = Arc::new(update_keys[1].clone());
 
@@ -278,7 +276,6 @@ async fn execute_private_update(
 
     for (_group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
         for (server_index, &addr) in addr_chunk.iter().enumerate() {
-            // Clone the Arc (cheap operation)
             let update_keys_0 = Arc::clone(&update_key_0);
             let update_keys_1 = Arc::clone(&update_key_1);
             
@@ -291,13 +288,13 @@ async fn execute_private_update(
                 };
 
                 let update_keys_proto = update_keys.iter().map(|key| {
-                    let cwn = dpf_key_bytes::Cwn {
+                    let cwn = dpf_key_array::Cwn {
                         hcw: key.cw_n.0.to_vec(),
                         lcw0: key.cw_n.1 as u32,
                         lcw1: key.cw_n.2 as u32,
                     };
 
-                    DpfKeyBytes {
+                    DpfKeyArray {
                         n: key.n as u32,
                         seed: key.seed.to_vec(),
                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
@@ -326,14 +323,11 @@ async fn execute_private_update(
 
     // Sequentially wait
     let mut responses = Vec::new();
-
     for future in server_futures {
-        // Await each future one at a time
         let response = future.await?;
         responses.push(response);
     }
 
-    // Print responses
     for response in responses {
         println!("{:?}", response);
     }
@@ -370,7 +364,6 @@ async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&str]) 
 }
 
 pub async fn run_client(server_addrs: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize client session
     let session = initialize_session(server_addrs).await?;
 
     loop {

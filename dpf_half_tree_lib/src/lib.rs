@@ -63,7 +63,7 @@ pub fn convert_g_final(s: &[u8; AES_BLOCK_SIZE], aes: &Aes128) -> i64 {
 
 /// PRF-based ConvertG for M i64 values using AES-CTR.
 /// Depends only on the s_n part of the input seed s = (s_n || t_n).
-pub fn convert_g_bytes<const M: usize>(
+pub fn convert_g_array<const M: usize>(
     s: &[u8; AES_BLOCK_SIZE], // Input is (s_n || t_n)
     aes_cipher: &Aes128, // The fixed key bytes for the main AES instance
 ) -> [i64; M] {
@@ -83,9 +83,9 @@ pub fn convert_g_bytes<const M: usize>(
     aes_cipher.encrypt_block(&mut ctr_key_block);
     let ctr_key = ctr_key_block; // Use the full 16 bytes as the CTR key
 
-    // Derive CTR nonce: Use a fixed nonce (e.g., all zeros) or derive one.
+    // Derive CTR nonce: Use a fixed nonce (e.g. all zeros) or derive one.
     // Using a fixed nonce is generally safe in CTR mode as long as the KEY is unique,
-    // which it is here (derived from s_only). Let's use a zero nonce.
+    // which it is here (derived from s_only). Thus, here we use zero nonce.
     let ctr_nonce = GenericArray::from([0u8; AES_BLOCK_SIZE]); // 16-byte zero nonce
 
     // Initialize CTR mode cipher
@@ -102,9 +102,7 @@ pub fn convert_g_bytes<const M: usize>(
     for k in 0..M {
         let start = k * 8;
         let end = start + 8;
-        // Ensure we don't panic if output_bytes is somehow too short (shouldn't happen)
         if end > output_bytes.len() {
-             // Handle error appropriately, maybe return Err or panic
              panic!("Generated insufficient bytes for ConvertG_M");
         }
         let chunk: [u8; 8] = output_bytes[start..end]
@@ -178,13 +176,13 @@ pub struct DPFKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Struct for a DPF key share
-pub struct DPFKeyBytes<const ENTRY_U64_SIZE: usize> {
+/// Struct for a DPF key share used when beta is integer array
+pub struct DPFKeyArray<const ENTRY_U64_SIZE: usize> {
     pub n: usize,
     pub seed: [u8; AES_BLOCK_SIZE], // (s_0 || t_0)
     pub cw_levels: Vec<[u8; AES_BLOCK_SIZE]>, // CW_1..CW_{n-1}
     pub cw_n: ([u8; AES_BLOCK_SIZE - 1], u8, u8), // CW_n represented as a tuple: (HCW, LCW^0, LCW^1)
-    pub cw_np1: [i64; ENTRY_U64_SIZE],                          // CW_{n+1} for beta with byte array
+    pub cw_np1: [i64; ENTRY_U64_SIZE],                          // CW_{n+1} for beta with integer array
 }
 
 pub fn dpf_gen(
@@ -378,13 +376,13 @@ pub fn dpf_gen(
 
 
 
-pub fn dpf_gen_bytes<const ENTRY_U64_SIZE: usize>(
+pub fn dpf_gen_array<const ENTRY_U64_SIZE: usize>(
     alpha: u32,
     beta: [u64; ENTRY_U64_SIZE],
     n: usize,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128,
-) -> (DPFKeyBytes<ENTRY_U64_SIZE>, DPFKeyBytes<ENTRY_U64_SIZE>) {
+) -> (DPFKeyArray<ENTRY_U64_SIZE>, DPFKeyArray<ENTRY_U64_SIZE>) {
     // 1) sample Δ with LSB=1 and share
     let delta = sample_delta(); 
     let (s0_initial, s1_initial) = share_delta(&delta); 
@@ -537,8 +535,8 @@ pub fn dpf_gen_bytes<const ENTRY_U64_SIZE: usize>(
     // Calculate CW_{n+1} but for byte array beta
 
     // Compute ConvertG on the final seeds (only using s_n, not t_n)
-    let sg0 = convert_g_bytes::<ENTRY_U64_SIZE>(&final0, &aes);
-    let sg1 = convert_g_bytes::<ENTRY_U64_SIZE>(&final1, &aes);
+    let sg0 = convert_g_array::<ENTRY_U64_SIZE>(&final0, &aes);
+    let sg1 = convert_g_array::<ENTRY_U64_SIZE>(&final1, &aes);
 
     // Use wrapping arithmetic explicitly for clarity and correctness
     let mut cw_np1 = [0i64; ENTRY_U64_SIZE];
@@ -551,14 +549,14 @@ pub fn dpf_gen_bytes<const ENTRY_U64_SIZE: usize>(
 
 
     (
-        DPFKeyBytes {
+        DPFKeyArray {
             n,
             seed: s0_initial,
             cw_levels: cw_levels.clone(), // Clone here
             cw_n: (hcw, lcw0, lcw1),
             cw_np1,
         },
-        DPFKeyBytes {
+        DPFKeyArray {
             n,
             seed: s1_initial,
             cw_levels, // Move original vector here
@@ -684,7 +682,6 @@ pub fn dpf_eval_full_optimized(
     hcw_with_lcw1[..AES_BLOCK_SIZE - 1].copy_from_slice(&key.cw_n.0);
     hcw_with_lcw1[AES_BLOCK_SIZE - 1] = key.cw_n.2;
 
-    // Pre-compute sign multiplier
     let sign = if b == 0 { 1i64 } else { -1i64 };
 
     let mut current_seeds = vec![key.seed];
@@ -760,9 +757,9 @@ pub fn dpf_eval_full_optimized(
 
 
 
-pub fn dpf_eval_bytes<const ENTRY_U64_SIZE: usize>(
+pub fn dpf_eval_array<const ENTRY_U64_SIZE: usize>(
     b: u8,
-    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+    key: &DPFKeyArray<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     x: u32,
     aes: &Aes128,
@@ -834,7 +831,7 @@ pub fn dpf_eval_bytes<const ENTRY_U64_SIZE: usize>(
     hs_out[AES_BLOCK_SIZE - 1] = t_n; // hs_out is now the normalized (s_n || t_n)
 
     // ConvertG for final output (only using s_n part of hs_out)
-    let convert_out = convert_g_bytes::<ENTRY_U64_SIZE>(&hs_out, aes);
+    let convert_out = convert_g_array::<ENTRY_U64_SIZE>(&hs_out, aes);
 
     // Calculate y_b = (-1)^b * (ConvertG(s_n) + t_n * CW_{n+1}) for bytes array beta cw_np1
     let mut result = [0i64; ENTRY_U64_SIZE];
@@ -849,9 +846,9 @@ pub fn dpf_eval_bytes<const ENTRY_U64_SIZE: usize>(
 }
 
 
-pub fn dpf_eval_bytes_full_optimized<const ENTRY_U64_SIZE: usize>(
+pub fn dpf_eval_array_full_optimized<const ENTRY_U64_SIZE: usize>(
     b: u8,
-    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+    key: &DPFKeyArray<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128,
 ) -> Vec<[i64; ENTRY_U64_SIZE]> {
@@ -935,7 +932,7 @@ pub fn dpf_eval_bytes_full_optimized<const ENTRY_U64_SIZE: usize>(
             temp_buffer[AES_BLOCK_SIZE - 1] = t_n;
 
             // ConvertG for final output (only using s_n part)
-            let convert_out = convert_g_bytes::<ENTRY_U64_SIZE>(&temp_buffer, aes);
+            let convert_out = convert_g_array::<ENTRY_U64_SIZE>(&temp_buffer, aes);
 
             // Calculate y_b = (-1)^b * (ConvertG(s_n) + t_n * CW_{n+1}) for each entry
             if output_index < result.len() {
@@ -962,16 +959,16 @@ pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
     bucket_bits: u32,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128, 
-) -> Vec<Vec<DPFKeyBytes<ENTRY_U64_SIZE>>> {
+) -> Vec<Vec<DPFKeyArray<ENTRY_U64_SIZE>>> {
     // client_keys[server_id][bucket_id] -> DPFKey
-    let mut client_keys: Vec<Vec<DPFKeyBytes<ENTRY_U64_SIZE>>> =
+    let mut client_keys: Vec<Vec<DPFKeyArray<ENTRY_U64_SIZE>>> =
         vec![Vec::with_capacity(num_buckets); 2];
 
     for server_id in 0..2 {
         for _ in 0..num_buckets {
             // Initialize with dummy values that will be overwritten
             // This ensures proper length so we can index into client_keys[server_id][bucket_idx]
-            client_keys[server_id].push(DPFKeyBytes {
+            client_keys[server_id].push(DPFKeyArray {
                 n: 0,
                 seed: [0u8; AES_BLOCK_SIZE],
                 cw_levels: Vec::new(),
@@ -996,9 +993,9 @@ pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
                     global_idx, bucket_idx, local_idx
                 );
                 // Generate keys for this specific point
-                let (k0, k1) = dpf_gen_bytes(
+                let (k0, k1) = dpf_gen_array(
                     local_idx,
-                    *value, // DPF usually encodes the value directly
+                    *value, 
                     bucket_bits as usize,
                     hs_key,
                     aes, 
@@ -1015,7 +1012,7 @@ pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
                 "  No target points in bucket {}. Generating zero function keys.",
                 bucket_idx
             );
-            let (k0, k1) = dpf_gen_bytes(
+            let (k0, k1) = dpf_gen_array(
                 0, // Arbitrary index for zero function
                 [0u64; ENTRY_U64_SIZE], // Value is zero
                 bucket_bits as usize,
@@ -1034,7 +1031,7 @@ pub fn dpf_priv_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
 
 pub fn dpf_priv_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
     server_id: u8,
-    server_keys: &[DPFKeyBytes<ENTRY_U64_SIZE>], 
+    server_keys: &[DPFKeyArray<ENTRY_U64_SIZE>], 
     db: &mut[[i64; ENTRY_U64_SIZE]],
     bucket_size: &usize,
     hs_key: &[u8; AES_BLOCK_SIZE],
@@ -1048,7 +1045,7 @@ pub fn dpf_priv_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
         .enumerate()
         .for_each(|(bucket_idx, bucket)| {
             let server_key = &server_keys[bucket_idx]; // Keys for this server, this bucket
-            let precomputed_seeds = dpf_eval_bytes_full_optimized(server_id, server_key, hs_key, aes);
+            let precomputed_seeds = dpf_eval_array_full_optimized(server_id, server_key, hs_key, aes);
 
             // Inner loop over DB entries in the bucket
             for (local_idx, db_entry) in bucket.iter_mut().enumerate() {
@@ -1075,23 +1072,23 @@ pub fn dpf_priv_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
 
 pub fn dpf_priv_update_additive<const ENTRY_U64_SIZE: usize>(
     server_id: u8,
-    server_key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+    server_key: &DPFKeyArray<ENTRY_U64_SIZE>,
     db: &mut[[i64; ENTRY_U64_SIZE]],
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128,
 ) {
     println!("Starting evaluation and update...");
-    let start_eval = Instant::now();
+    let start_eval = Instant::now(); 
 
-    let precomputed_seeds = dpf_full_eval_precompute_parallel_bytes(server_key, hs_key, aes);
-    //let precomputed_seeds = dpf_eval_bytes_full_optimized(server_id, server_key, hs_key, aes);
+    let precomputed_seeds = dpf_full_eval_precompute_parallel_array(server_key, hs_key, aes);
+    //let precomputed_seeds = dpf_eval_array_full_optimized(server_id, server_key, hs_key, aes);
     
     let duration = start_eval.elapsed();
     println!("Precomputation Evaluation and update took: {:?}s ({}ms)", duration.as_secs_f64(), duration.as_millis());
 
     // for i in 0..db.len(){
     //     for k in 0..ENTRY_U64_SIZE{
-    //         db[i][k] = db[i][k].wrapping_add(dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(server_id, server_key, hs_key, i as u32, aes, &precomputed_seeds)[k]);
+    //         db[i][k] = db[i][k].wrapping_add(dpf_eval_fast_array::<ENTRY_U64_SIZE>(server_id, server_key, hs_key, i as u32, aes, &precomputed_seeds)[k]);
     //     }
     // }
 
@@ -1099,7 +1096,7 @@ pub fn dpf_priv_update_additive<const ENTRY_U64_SIZE: usize>(
     db.par_iter_mut()
         .enumerate()
         .for_each(|(i, db_entry)| {
-            let eval_result = dpf_eval_fast_bytes::<ENTRY_U64_SIZE>(
+            let eval_result = dpf_eval_fast_array::<ENTRY_U64_SIZE>(
                 server_id,
                 server_key,
                 hs_key,
@@ -1599,112 +1596,7 @@ fn calculate_pir_config_internal(
 }
 
 
-// pub fn calculate_pir_config(n: usize, bucket_num_option: usize) -> (usize, usize, usize, u32) {
-//     if n == 0 {
-//         panic!("N must be greater than 0 to calculate PIR configuration.");
-//     }
-
-//     // Check if bucket_num_option is a power of 2
-//     if bucket_num_option == 0 || (bucket_num_option & (bucket_num_option - 1)) != 0 {
-//         panic!(
-//             "BUCKET_NUM_OPTION ({}) must be a power of 2.",
-//             bucket_num_option
-//         );
-//     }
-
-//     // Calculate DB_SIZE, checking for potential overflow if n is very large
-//     let db_size = 1usize.checked_shl(n as u32).unwrap_or_else(|| {
-//         panic!("N ({}) is too large, 1 << N overflowed usize", n)
-//     });
-
-//     // Calculate the constraint threshold
-//     let sqrt_db_size = (db_size as f64).sqrt();
-//     if !sqrt_db_size.is_finite() {
-//         panic!(
-//             "Square root calculation resulted in non-finite value for N={}",
-//             n
-//         );
-//     }
-//     let sqrt_db_floor = sqrt_db_size.floor();
-
-//     // Calculate the maximum allowed value for k (NUM_BUCKETS) based on the formula
-//     // k * N <= floor(sqrt(DB_SIZE))  => k <= floor(sqrt(DB_SIZE)) / N
-//     let max_k_float = sqrt_db_floor / (n as f64);
-//     if !max_k_float.is_finite() {
-//         panic!("Max k calculation resulted in non-finite value for N={}", n);
-//     }
-
-//     // We need the largest *power of 2* for NUM_BUCKETS that is <= max_k_float
-//     let max_k_allowed = max_k_float.floor() as usize;
-
-//     let base_num_buckets = if max_k_allowed == 0 {
-//         // If even k=1 doesn't satisfy the condition (or N is huge),
-//         // the largest power of 2 <= 0 doesn't make sense.
-//         // Default to 1 bucket, as it's the smallest possible power-of-2 division.
-//         if (n as f64) > sqrt_db_floor {
-//             println!(
-//                 "Warning: For N={}, even 1 bucket violates the condition ({} > {}). \
-//                  Defaulting to 1 bucket anyway.",
-//                 n, n, sqrt_db_floor
-//             );
-//         }
-//         1 // Smallest power-of-2 division
-//     } else {
-//         // Find the greatest power of 2 less than or equal to max_k_allowed.
-//         // Equivalent to 2^(floor(log2(max_k_allowed)))
-//         1usize << max_k_allowed.ilog2()
-//     };
-
-//     // Apply bucket number option multiplier
-//     let num_buckets = base_num_buckets.checked_mul(bucket_num_option).unwrap_or_else(|| {
-//         panic!(
-//             "BUCKET_NUM_OPTION ({}) causes overflow when multiplied with base_num_buckets ({})",
-//             bucket_num_option, base_num_buckets
-//         )
-//     });
-
-//     // Check feasibility: number of buckets cannot exceed database size
-//     if num_buckets > db_size {
-//          // Calculate valid power-of-2 BUCKET_NUM_OPTION values
-//         let max_feasible_option = db_size / base_num_buckets;
-//         let mut valid_options = Vec::new();
-//         let mut option = 1;
-//         while option <= max_feasible_option {
-//             valid_options.push(option.to_string());
-//             option *= 2;
-//         }
-
-//         panic!(
-//             "BUCKET_NUM_OPTION ({}) results in too many buckets ({}). \
-//              Cannot have more buckets than database entries ({}). \
-//              Valid power-of-2 BUCKET_NUM_OPTION values for N={} are: {}",
-//             bucket_num_option,
-//             num_buckets,
-//             db_size,
-//             n,
-//             valid_options.join(", ")
-//         );
-//     }
-
-//     // Calculate BUCKET_SIZE. Since num_buckets and db_size are powers of 2,
-//     // bucket_size will also be a power of 2 if num_buckets <= db_size.
-//     let bucket_size = db_size / num_buckets;
-    
-//     // Check that bucket_size is a power of 2 (required for efficient operations)
-//     if bucket_size == 0 || (bucket_size & (bucket_size - 1)) != 0 {
-//         panic!(
-//             "BUCKET_NUM_OPTION ({}) results in bucket_size ({}) that is not a power of 2. \
-//              This occurs when num_buckets ({}) doesn't divide db_size ({}) into power-of-2 chunks. \
-//              Try a different BUCKET_NUM_OPTION value.",
-//             bucket_num_option, bucket_size, num_buckets, db_size
-//         );
-//     }
-
-//     let bucket_bits = bucket_size.ilog2(); // log2 of bucket_size
-
-//     (db_size, num_buckets, bucket_size, bucket_bits)
-// }
-
+//  ===== Below are functions that used rayon parallelism for full domain eval, but they werent as fast. I keep these as reference which i improved upon in above funcs ==================
 
 /// Precomputes the state after the main loop for all 2^(n-1) paths using Rayon.
 /// Returns a Vec containing the final `current_seed` for each path prefix.
@@ -1810,8 +1702,6 @@ pub fn dpf_eval_fast(
     let current_seed = if n == 1 {
         precomputed_seeds[0]
     } else {
-        // Bounds check might be wise in production code if n is dynamic
-        // assert!(prefix_index < precomputed_seeds.len());
         precomputed_seeds[prefix_index]
     };
     // current_seed now holds the state s_{n-1} (equivalent to the state after the loop)
@@ -1863,9 +1753,9 @@ pub fn dpf_eval_fast(
 
 
 /// Evaluates the DPF key using the precomputed loop results.
-pub fn dpf_eval_fast_bytes<const ENTRY_U64_SIZE: usize>(
+pub fn dpf_eval_fast_array<const ENTRY_U64_SIZE: usize>(
     b: u8,
-    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+    key: &DPFKeyArray<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     x: u32,
     aes: &Aes128,
@@ -1922,7 +1812,7 @@ pub fn dpf_eval_fast_bytes<const ENTRY_U64_SIZE: usize>(
     hs_out[AES_BLOCK_SIZE - 1] = t_n; // hs_out is now the normalized (s_n || t_n)
 
     // ConvertG for final output (only using s_n part of hs_out)
-    let convert_out = convert_g_bytes::<ENTRY_U64_SIZE>(&hs_out, aes);
+    let convert_out = convert_g_array::<ENTRY_U64_SIZE>(&hs_out, aes);
 
     // Calculate y_b = (-1)^b * (ConvertG(s_n) + t_n * CW_{n+1}) for bytes array beta cw_np1
     let mut result = [0i64; ENTRY_U64_SIZE];
@@ -1939,8 +1829,8 @@ pub fn dpf_eval_fast_bytes<const ENTRY_U64_SIZE: usize>(
 
 /// Precomputes the state after the main loop for all 2^(n-1) paths using Rayon.
 /// Returns a Vec containing the final `current_seed` for each path prefix.
-pub fn dpf_full_eval_precompute_parallel_bytes<const ENTRY_U64_SIZE: usize>(
-    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+pub fn dpf_full_eval_precompute_parallel_array<const ENTRY_U64_SIZE: usize>(
+    key: &DPFKeyArray<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE], 
     aes: &Aes128,
 ) -> Vec<[u8; AES_BLOCK_SIZE]> {
@@ -2169,6 +2059,8 @@ pub fn dpf_eval_fast_with_full_final_step(
 
     result
 }
+
+// =======================================================================================================================================================
 
 
 

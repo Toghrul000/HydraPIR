@@ -1,5 +1,5 @@
 use crate::ms_kpir::pir_service_private_update_client::PirServicePrivateUpdateClient;
-use crate::ms_kpir::{dpf_key_bytes, BucketKeys, ClientSessionInitRequest, DpfKey, DpfKeyBytes, PrivUpdateRequest};
+use crate::ms_kpir::{dpf_key_array, BucketKeys, ClientSessionInitRequest, DpfKey, DpfKeyArray, PrivUpdateRequest};
 use crate::ms_kpir::dpf_key;
 use cuckoo_lib::{encode_entry, get_hierarchical_indices, Entry};
 use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers, dpf_priv_update_gen_buckets};
@@ -34,18 +34,14 @@ pub struct ClientSession {
 
 // Initialize a new client session with the servers
 pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, Box<dyn std::error::Error>> {
-    // Generate a unique client ID
     let client_id = Uuid::new_v4().to_string();
-    
     let mut rng = StdRng::from_os_rng();
-    // Generate random AES key and hash key
     let mut aes_key_bytes = [0u8; 16];
     rng.fill_bytes(&mut aes_key_bytes);
     
     let mut hash_key = [0u8; 16];
     rng.fill_bytes(&mut hash_key);
     
-    // Create a session with default values that will be updated
     let mut session = ClientSession {
         client_id: client_id.clone(),
         aes_key: aes_key_bytes,
@@ -59,8 +55,7 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
         entry_u64_count: 0,
         
     };
-    
-    // Send session init request to each server
+
     for &addr in server_addrs {
         let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await?;
         
@@ -124,7 +119,6 @@ async fn execute_pir_query_and_display_results(
     let beta = 1;
     let target_points: Vec<(u32, u32)> = global_indexes.iter().map(|x| (*x as u32, beta)).collect();
     
-    // Get AES instance - needed for the DPF
     let aes = create_aes(&session.aes_key);
 
     let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
@@ -193,7 +187,6 @@ async fn execute_pir_query_and_display_results(
         }).collect()
     }).collect();
 
-    // Run reconstruction
     let final_slots = dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
         &all_server_results,
         session.num_buckets as usize,
@@ -216,11 +209,9 @@ async fn execute_pir_query_and_display_results(
             .find(|&&(bucket, _)| bucket == bucket_idx)
             .map(|&(_, global_idx)| global_idx);
             
-        // Use the decode_entry from cuckoo_lib to decode the entry
         match cuckoo_lib::decode_entry(slot) {
             Ok(Some((key, value))) => {
                 println!("  Bucket {}: key=\"{}\", value=\"{}\"", bucket_idx, key, value);
-                // Check if this is the key we queried for
                 if key == input_query_key && global_index.is_some() {
                     query_result = Some((global_index.unwrap(), value, slot.clone()));
                 }
@@ -261,7 +252,6 @@ async fn execute_private_update(
 
     let target_points = vec![(global_idx as u32, beta)];
 
-    // Generate DPF keys for the update
     let update_keys = dpf_priv_update_gen_buckets::<ENTRY_U64_COUNT>(
         &target_points,
         session.num_buckets as usize,
@@ -271,7 +261,6 @@ async fn execute_private_update(
         &aes,
     );
 
-    // Wrap the keys in Arc for shared ownership
     let update_key_0 = Arc::new(update_keys[0].clone());
     let update_key_1 = Arc::new(update_keys[1].clone());
 
@@ -279,7 +268,6 @@ async fn execute_private_update(
 
     for (_group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
         for (server_index, &addr) in addr_chunk.iter().enumerate() {
-            // Clone the Arc (cheap operation)
             let update_keys_0 = Arc::clone(&update_key_0);
             let update_keys_1 = Arc::clone(&update_key_1);
             
@@ -292,13 +280,13 @@ async fn execute_private_update(
                 };
 
                 let update_keys_proto = update_keys.iter().map(|key| {
-                    let cwn = dpf_key_bytes::Cwn {
+                    let cwn = dpf_key_array::Cwn {
                         hcw: key.cw_n.0.to_vec(),
                         lcw0: key.cw_n.1 as u32,
                         lcw1: key.cw_n.2 as u32,
                     };
 
-                    DpfKeyBytes {
+                    DpfKeyArray {
                         n: key.n as u32,
                         seed: key.seed.to_vec(),
                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
@@ -327,14 +315,11 @@ async fn execute_private_update(
 
     // Sequentially wait
     let mut responses = Vec::new();
-
     for future in server_futures {
-        // Await each future one at a time
         let response = future.await?;
         responses.push(response);
     }
 
-    // Print responses
     for response in responses {
         println!("{:?}", response);
     }

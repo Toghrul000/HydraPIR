@@ -15,7 +15,6 @@ pub async fn run_admin_client(
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Performing Insertions from {} ---", csv_file_path);
 
-    // Check if file exists
     if !std::path::Path::new(csv_file_path).exists() {
         return Err(Box::<dyn Error>::from(format!(
             "CSV file not found at '{}'",
@@ -23,12 +22,10 @@ pub async fn run_admin_client(
         )));
     }
 
-    // Connect to first server
     let first_server_addr = &server_addresses[0];
     let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", first_server_addr)).await?;
     println!("Connected to server at {}", first_server_addr);
 
-    // Open and read CSV file
     let file = std::fs::File::open(csv_file_path)?;
     let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(file);
 
@@ -78,7 +75,7 @@ pub async fn run_admin_client(
         println!("Client: Finished processing CSV file for streaming.");
     };
 
-    // Send the stream to server and wait for response
+    // Send the stream to server
     let response = client.stream_csv_data(Request::new(outbound)).await?;
     let response = response.into_inner();
     println!("Client: Server acknowledgement: {:?}", response);
@@ -106,32 +103,27 @@ pub async fn update_servers(
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Updating servers with key: {} ---", key);
 
-    // First check if we have any server addresses
     if server_addresses.is_empty() {
         return Err(Box::<dyn Error>::from("No server addresses provided"));
     }
 
-    // Connect to first server
     let seed: [u8; 16] = rand::rng().random();
     for server_addr in server_addresses{
         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
         let start = Instant::now();
-    
-        // Create the CsvRow for the single key-value pair
+
         let csv_row = CsvRow {
             key: key.clone(),
             value: value.clone(),
         };
         
-        // Create the UpdateSingleEntryRequest
         let update_request = UpdateSingleEntryRequest {
             csv_row: Some(csv_row),
             deterministic_eviction_seed: seed.to_vec(),
             upsert: upsert,
         };
-    
-        // Send the update request to the first server
+
         println!("Sending update request to server at {}", server_addr);
         let response = client.update_single_entry(Request::new(update_request)).await?;
         let response = response.into_inner();
@@ -155,31 +147,26 @@ pub async fn insert_servers(
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Updating servers with key: {} ---", key);
 
-    // First check if we have any server addresses
     if server_addresses.is_empty() {
         return Err(Box::<dyn Error>::from("No server addresses provided"));
     }
 
-    // Connect to first server
     let seed: [u8; 16] = rand::rng().random();
     for server_addr in server_addresses{
         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
         let start = Instant::now();
-    
-        // Create the CsvRow for the single key-value pair
+
         let csv_row = CsvRow {
             key: key.clone(),
             value: value.clone(),
         };
-        
-        // Create the UpdateSingleEntryRequest
+
         let update_request = InsertSingleEntryRequest {
             csv_row: Some(csv_row),
             deterministic_eviction_seed: seed.to_vec(),
         };
-    
-        // Send the update request to the first server
+
         println!("Sending update request to server at {}", server_addr);
         let response = client.insert_single_entry(Request::new(update_request)).await?;
         let response = response.into_inner();
@@ -203,7 +190,6 @@ pub async fn soft_delete_entry(
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Removing key: {} from servers ---", key);
 
-    // First check if we have any server addresses
     if server_addresses.is_empty() {
         return Err(Box::<dyn Error>::from("No server addresses provided"));
     }
@@ -212,14 +198,11 @@ pub async fn soft_delete_entry(
         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
         println!("Connected to server at {}", server_addr);
         let start = Instant::now();
-    
-        // Create the CsvRow for the single key-value pair
+
         let soft_delete_request = SoftDeleteRequest {
             key: key.clone()
         };
         
-    
-        // Send the update request to the first server
         println!("Sending update request to server at {}", server_addr);
         let response = client.soft_delete_entry(Request::new(soft_delete_request)).await?;
         let response = response.into_inner();

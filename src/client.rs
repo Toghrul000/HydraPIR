@@ -31,18 +31,14 @@ pub struct ClientSession {
 
 // Initialize a new client session with the servers
 pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, Box<dyn std::error::Error>> {
-    // Generate a unique client ID
     let client_id = Uuid::new_v4().to_string();
-    
     let mut rng = StdRng::from_os_rng();
-    // Generate random AES key and hash key
     let mut aes_key_bytes = [0u8; 16];
     rng.fill_bytes(&mut aes_key_bytes);
     
     let mut hash_key = [0u8; 16];
     rng.fill_bytes(&mut hash_key);
-    
-    // Create a session with default values that will be updated
+
     let mut session = ClientSession {
         client_id: client_id.clone(),
         aes_key: aes_key_bytes,
@@ -56,7 +52,6 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
         
     };
     
-    // Send session init request to each server
     let mut first_server_keys: Option<(Vec<Vec<u8>>, Vec<u8>)> = None;
     
     for (i, &addr) in server_addrs.iter().enumerate() {
@@ -83,12 +78,10 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
                     array
                 })
                 .collect();
-            // Store the first server's keys to send to other servers
             first_server_keys = Some((
                 response_inner.local_hash_keys.clone(),
                 response_inner.bucket_selection_key.clone()
             ));
-            // Now use the cloned value for the session
             session.bucket_selection_key = response_inner.bucket_selection_key.try_into().unwrap();
             session.entry_u64_count = response_inner.entry_u64_count as usize;
         } else if i > 0 {
@@ -96,11 +89,8 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
             if let Some((first_local_hash_keys, first_bucket_selection_key)) = &first_server_keys {
                 // Check if either the local hash keys or bucket selection key is different
                 let keys_are_different = 
-                    // Check if lengths are different
                     response_inner.local_hash_keys.len() != first_local_hash_keys.len() ||
-                    // Check if bucket selection key is different
                     response_inner.bucket_selection_key != *first_bucket_selection_key ||
-                    // Check if any local hash key is different
                     response_inner.local_hash_keys.iter()
                         .zip(first_local_hash_keys.iter())
                         .any(|(a, b)| a != b);
@@ -151,8 +141,7 @@ pub async fn execute_pir_query_and_display_results(
 
     let beta = 1;
     let target_points: Vec<(u32, u32)> = global_indexes.iter().map(|x| (*x as u32, beta)).collect();
-    
-    // Get AES instance - needed for the DPF
+
     let aes = create_aes(&session.aes_key);
 
     let client_keys = dmpf_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hs_key, &aes);
@@ -165,16 +154,13 @@ pub async fn execute_pir_query_and_display_results(
 
             let mut client = PirServiceClient::connect(format!("http://{}", addr)).await?;
             
-            // Convert Rust DPFKey to protobuf DPFKey
             let proto_bucket_keys = client_keys_for_server.clone().iter().map(|key| {
-                // Try with just the struct name, let Rust use the import correctly
                 let cwn = dpf_key::Cwn {
                     hcw: key.cw_n.0.to_vec(),
                     lcw0: key.cw_n.1 as u32,
                     lcw1: key.cw_n.2 as u32,
                 };
-                
-                // Create the DPFKey
+
                 DpfKey {
                     n: key.n as u32,
                     seed: key.seed.to_vec(),
@@ -206,7 +192,7 @@ pub async fn execute_pir_query_and_display_results(
     // Sequentially wait
     let mut answers = Vec::new();
     for future in server_futures {
-        let answer = future.await?;  // Propagate error if any
+        let answer = future.await?; 
         answers.push(answer);
     }
 
@@ -224,7 +210,6 @@ pub async fn execute_pir_query_and_display_results(
         }).collect()
     }).collect();
 
-    // Run reconstruction
     let final_slots = dmpf_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
         &all_server_results,
         session.num_buckets as usize,
@@ -234,7 +219,6 @@ pub async fn execute_pir_query_and_display_results(
     let mut query_result = None;
     println!("Reconstructed results per bucket:");
     
-    // Calculate which bucket each global index belongs to
     let bucket_size = session.bucket_size as usize;
     let bucket_to_global_index = global_indexes.iter().map(|&global_idx| {
         let bucket_idx = global_idx / bucket_size;
@@ -247,11 +231,9 @@ pub async fn execute_pir_query_and_display_results(
             .find(|&&(bucket, _)| bucket == bucket_idx)
             .map(|&(_, global_idx)| global_idx);
             
-        // Use the decode_entry from cuckoo_lib to decode the entry
         match cuckoo_lib::decode_entry(slot) {
             Ok(Some((key, value))) => {
                 println!("  Bucket {}: key=\"{}\", value=\"{}\"", bucket_idx, key, value);
-                // Check if this is the key we queried for
                 if key == input_query_key && global_index.is_some() {
                     query_result = Some((global_index.unwrap(), value, slot.clone()));
                 }

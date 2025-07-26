@@ -19,18 +19,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start a server instance
     Server {
-        /// Server address (e.g., 127.0.0.1:50051)
         addr: String,
     },
-    /// Run the client
     Client {
-        /// Server addresses to connect to
         #[arg(short, long, num_args = 1.., required = true)]
         servers: Vec<String>,
     },
-    /// Run the admin client
     Admin {
         #[command(subcommand)]
         action: AdminAction,
@@ -41,7 +36,6 @@ enum Commands {
 enum AdminAction {
     /// Initialize servers with data from a CSV file
     Init {
-        /// Server addresses to connect to
         #[arg(short, long, num_args = 1.., required = true)]
         servers: Vec<String>,
         /// Path to the CSV file
@@ -50,7 +44,6 @@ enum AdminAction {
     },
     /// Updates a new key-value pair
     Update {
-        /// Server addresses to connect to
         #[arg(short, long, num_args = 1.., required = true)]
         servers: Vec<String>,
         /// Key to update
@@ -65,7 +58,6 @@ enum AdminAction {
     },
     /// Insert a new key-value pair
     Insert {
-        /// Server addresses to connect to
         #[arg(short, long, num_args = 1.., required = true)]
         servers: Vec<String>,
         /// Key to insert
@@ -75,12 +67,9 @@ enum AdminAction {
         #[arg(short, long, required = true)]
         value: String,
     },
-    /// Delete a key from servers
     Delete {
-        /// Server addresses to connect to
         #[arg(short, long, num_args = 1.., required = true)]
         servers: Vec<String>,
-        /// Key to delete
         #[arg(short, long, required = true)]
         key: String,
     },

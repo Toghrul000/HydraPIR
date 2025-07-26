@@ -54,7 +54,7 @@ fn hs_final(key: &[u8; AES_BLOCK_SIZE], st: &[u8; AES_BLOCK_SIZE], aes: &Aes128,
 
 /// PRF-based ConvertG for M i64 values using AES-CTR.
 /// Depends only on the s_n part of the input seed s = (s_n || t_n).
-pub fn convert_g_bytes<const M: usize>(
+pub fn convert_g_array<const M: usize>(
     s: &[u8; AES_BLOCK_SIZE], // Input is (s_n || t_n)
     aes_cipher: &Aes128, // The fixed key bytes for the main AES instance
 ) -> [i64; M] {
@@ -74,9 +74,9 @@ pub fn convert_g_bytes<const M: usize>(
     aes_cipher.encrypt_block(&mut ctr_key_block);
     let ctr_key = ctr_key_block; // Use the full 16 bytes as the CTR key
 
-    // Derive CTR nonce: Use a fixed nonce (e.g., all zeros) or derive one.
+    // Derive CTR nonce: Use a fixed nonce (e.g. all zeros) or derive one.
     // Using a fixed nonce is generally safe in CTR mode as long as the KEY is unique,
-    // which it is here (derived from s_only). Let's use a zero nonce.
+    // which it is here (derived from s_only). Thus, here we use zero nonce.
     let ctr_nonce = GenericArray::from([0u8; AES_BLOCK_SIZE]); // 16-byte zero nonce
 
     // Initialize CTR mode cipher
@@ -259,8 +259,6 @@ pub fn dpf_bit_gen(
         get_bit(alpha, (n - 1 - target_stop) as u32, n as u32)
     };
     let alpha_n_bar = 1 - alpha_n; // ᾱ_n
-    // println!(" Alpha_n {}", alpha_n);
-    // println!("Here");
 
     // Compute HS(s_{n-1}^b ⊕ σ) for σ ∈ {0,1}
     let mut hi0 = [[0u8; AES_BLOCK_SIZE]; 2]; 
@@ -569,7 +567,6 @@ pub fn dpf_bit_eval_full(
     let mut output_bit_values = Vec::with_capacity(total_output_bits);
 
     for mut s_m_t_m_seed_unnormalized in s_m_t_m_seeds {
-        // Normalize
         let t_m_final = s_m_t_m_seed_unnormalized[AES_BLOCK_SIZE - 1] & 1;
         s_m_t_m_seed_unnormalized[AES_BLOCK_SIZE - 1] = t_m_final; // Now it's normalized (s_m || t_m)
 
@@ -586,11 +583,11 @@ pub fn dpf_bit_eval_full(
             let bit_pos_in_byte = bit_idx_in_block % 8;
             let bit_val = (transformed_block[byte_pos] >> bit_pos_in_byte) & 1;
             output_bit_values.push(bit_val);
-            if output_bit_values.len() == total_output_bits {
-                // Should happen if n is small enough that one s_m_t_m_seed_unnormalized
-                // doesn't cover the whole domain.
-                // For larger n, this loop will run multiple times.
-            }
+            // if output_bit_values.len() == total_output_bits {
+            //     // Should happen if n is small enough that one s_m_t_m_seed_unnormalized
+            //     // doesn't cover the whole domain.
+            //     // For larger n, this loop will run multiple times.
+            // }
         }
     }
     
@@ -971,7 +968,7 @@ pub fn dmpf_bit_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
                 let global_idx = bucket_start_idx + local_idx;
 
                 if global_idx >= db.len() {
-                    continue; // Skip if out of DB bounds
+                    continue;
                 }
                 
                 let db_item_u64= &db[global_idx];
@@ -981,8 +978,6 @@ pub fn dmpf_bit_pir_query_eval_additive<const ENTRY_U64_SIZE: usize>(
                 let bit_idx = local_idx % 8;
                 let bit_eval = (precomputed_seeds[byte_idx] >> bit_idx) & 1;
                 let mask = 0u64.wrapping_sub(bit_eval as u64);
-
-                // Accumulate the result
                 for k in 0..ENTRY_U64_SIZE {
                     bucket_result[k] ^= db_item_u64[k] & mask as i64;
                 }
@@ -1047,17 +1042,12 @@ pub fn dmpf_bit_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
         
         // Combine results from all servers for this bucket
         for k in 0..ENTRY_U64_SIZE {
-            // Sum the k-th component across all servers for this bucket
             let mut component_sum = 0i64;
             for server_id in 0..num_servers {
-                // Access the result from each server
                 component_sum = component_sum ^ all_server_results[server_id][bucket_idx][k];
             }
-            // Convert the combined i64 result to u64
             result_u64[k] = component_sum as u64;
         }
-        
-        // Add the reconstructed entry for this bucket
         reconstructed_entries.push(result_u64);
     }
 
@@ -1070,7 +1060,7 @@ pub fn dmpf_bit_pir_reconstruct_servers<const ENTRY_U64_SIZE: usize>(
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Struct for a DPF key share
-pub struct DPFKeyBytes<const ENTRY_U64_SIZE: usize> {
+pub struct DPFKeyArray<const ENTRY_U64_SIZE: usize> {
     pub n: usize,
     pub seed: [u8; AES_BLOCK_SIZE], // (s_0 || t_0)
     pub cw_levels: Vec<[u8; AES_BLOCK_SIZE]>, // CW_1..CW_{n-1}
@@ -1079,13 +1069,13 @@ pub struct DPFKeyBytes<const ENTRY_U64_SIZE: usize> {
 }
 
 
-pub fn dpf_gen_xor_bytes<const ENTRY_U64_SIZE: usize>(
+pub fn dpf_gen_xor_array<const ENTRY_U64_SIZE: usize>(
     alpha: u32,
     beta: [u64; ENTRY_U64_SIZE],
     n: usize,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128,
-) -> (DPFKeyBytes<ENTRY_U64_SIZE>, DPFKeyBytes<ENTRY_U64_SIZE>) {
+) -> (DPFKeyArray<ENTRY_U64_SIZE>, DPFKeyArray<ENTRY_U64_SIZE>) {
     // 1) sample Δ with LSB=1 and share
     let delta = sample_delta(); 
     let (s0_initial, s1_initial) = share_delta(&delta); 
@@ -1236,8 +1226,8 @@ pub fn dpf_gen_xor_bytes<const ENTRY_U64_SIZE: usize>(
 
     // Calculate CW_{n+1} but for XOR-based sharing instead of additive
     // Compute ConvertG on the final seeds (only using s_n, not t_n)
-    let sg0 = convert_g_bytes::<ENTRY_U64_SIZE>(&final0, &aes);
-    let sg1 = convert_g_bytes::<ENTRY_U64_SIZE>(&final1, &aes);
+    let sg0 = convert_g_array::<ENTRY_U64_SIZE>(&final0, &aes);
+    let sg1 = convert_g_array::<ENTRY_U64_SIZE>(&final1, &aes);
 
     // For XOR-based DPF: CW_{n+1} = beta ⊕ sg0 ⊕ sg1 ⊕ (t_n0 ⊕ t_n1) * correction
     let mut cw_np1 = [0i64; ENTRY_U64_SIZE];
@@ -1264,17 +1254,17 @@ pub fn dpf_gen_xor_bytes<const ENTRY_U64_SIZE: usize>(
     }
 
     (
-        DPFKeyBytes {
+        DPFKeyArray {
             n,
             seed: s0_initial,
-            cw_levels: cw_levels.clone(), // Clone here
+            cw_levels: cw_levels.clone(),
             cw_n: (hcw, lcw0, lcw1),
             cw_np1,
         },
-        DPFKeyBytes {
+        DPFKeyArray {
             n,
             seed: s1_initial,
-            cw_levels, // Move original vector here
+            cw_levels, 
             cw_n: (hcw, lcw0, lcw1),
             cw_np1,
         },
@@ -1282,14 +1272,14 @@ pub fn dpf_gen_xor_bytes<const ENTRY_U64_SIZE: usize>(
 }
 
 
-pub fn dpf_eval_xor_bytes<const ENTRY_U64_SIZE: usize>(
-    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+pub fn dpf_eval_xor_array<const ENTRY_U64_SIZE: usize>(
+    key: &DPFKeyArray<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     x: u32,
     aes: &Aes128,
 ) -> [i64; ENTRY_U64_SIZE] {
     // Step 1: Parse k_b components
-    let mut current_seed = key.seed; // Start with the initial seed
+    let mut current_seed = key.seed; 
     let n = key.n;
 
     // Buffer for hs output, reused in the loop
@@ -1355,7 +1345,7 @@ pub fn dpf_eval_xor_bytes<const ENTRY_U64_SIZE: usize>(
     hs_out[AES_BLOCK_SIZE - 1] = t_n; // hs_out is now the normalized (s_n || t_n)
 
     // ConvertG for final output (only using s_n part of hs_out)
-    let convert_out = convert_g_bytes::<ENTRY_U64_SIZE>(&hs_out, aes);
+    let convert_out = convert_g_array::<ENTRY_U64_SIZE>(&hs_out, aes);
 
     // Calculate y_b using XOR instead of addition
     // For XOR-based DPF: y_b = ConvertG(s_n) ⊕ (t_n * CW_{n+1})
@@ -1370,8 +1360,8 @@ pub fn dpf_eval_xor_bytes<const ENTRY_U64_SIZE: usize>(
 }
 
 
-pub fn dpf_eval_xor_bytes_full_optimized<const ENTRY_U64_SIZE: usize>(
-    key: &DPFKeyBytes<ENTRY_U64_SIZE>,
+pub fn dpf_eval_xor_array_full_optimized<const ENTRY_U64_SIZE: usize>(
+    key: &DPFKeyArray<ENTRY_U64_SIZE>,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128,
 ) -> Vec<[i64; ENTRY_U64_SIZE]> {
@@ -1452,7 +1442,7 @@ pub fn dpf_eval_xor_bytes_full_optimized<const ENTRY_U64_SIZE: usize>(
             temp_buffer[AES_BLOCK_SIZE - 1] = t_n;
 
             // ConvertG for final output (only using s_n part)
-            let convert_out = convert_g_bytes::<ENTRY_U64_SIZE>(&temp_buffer, aes);
+            let convert_out = convert_g_array::<ENTRY_U64_SIZE>(&temp_buffer, aes);
 
             // Calculate y_b using XOR instead of addition
             if output_index < result.len() {
@@ -1477,16 +1467,16 @@ pub fn dpf_priv_xor_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
     bucket_bits: u32,
     hs_key: &[u8; AES_BLOCK_SIZE],
     aes: &Aes128, 
-) -> Vec<Vec<DPFKeyBytes<ENTRY_U64_SIZE>>> {
+) -> Vec<Vec<DPFKeyArray<ENTRY_U64_SIZE>>> {
     // client_keys[server_id][bucket_id] -> DPFKey
-    let mut client_keys: Vec<Vec<DPFKeyBytes<ENTRY_U64_SIZE>>> =
+    let mut client_keys: Vec<Vec<DPFKeyArray<ENTRY_U64_SIZE>>> =
         vec![Vec::with_capacity(num_buckets); 2];
 
     for server_id in 0..2 {
         for _ in 0..num_buckets {
             // Initialize with dummy values that will be overwritten
             // This ensures proper length so we can index into client_keys[server_id][bucket_idx]
-            client_keys[server_id].push(DPFKeyBytes {
+            client_keys[server_id].push(DPFKeyArray {
                 n: 0,
                 seed: [0u8; AES_BLOCK_SIZE],
                 cw_levels: Vec::new(),
@@ -1514,9 +1504,9 @@ pub fn dpf_priv_xor_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
                     global_idx, bucket_idx, local_idx
                 );
                 // Generate keys for this specific point
-                let (k0, k1) = dpf_gen_xor_bytes(
+                let (k0, k1) = dpf_gen_xor_array(
                     local_idx,
-                    *value, // DPF usually encodes the value directly
+                    *value, 
                     bucket_bits as usize,
                     hs_key,
                     aes, 
@@ -1533,7 +1523,7 @@ pub fn dpf_priv_xor_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
                 "  No target points in bucket {}. Generating zero function keys.",
                 bucket_idx
             );
-            let (k0, k1) = dpf_gen_xor_bytes(
+            let (k0, k1) = dpf_gen_xor_array(
                 0, // Arbitrary index for zero function
                 [0u64; ENTRY_U64_SIZE], // Value is zero
                 bucket_bits as usize,
@@ -1552,7 +1542,7 @@ pub fn dpf_priv_xor_update_gen_buckets<const ENTRY_U64_SIZE: usize>(
 
 pub fn dpf_priv_xor_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
     server_id: u8,
-    server_keys: &[DPFKeyBytes<ENTRY_U64_SIZE>], 
+    server_keys: &[DPFKeyArray<ENTRY_U64_SIZE>], 
     db: &mut[[i64; ENTRY_U64_SIZE]],
     bucket_size: &usize,
     hs_key: &[u8; AES_BLOCK_SIZE],
@@ -1567,7 +1557,7 @@ pub fn dpf_priv_xor_update_additive_buckets<const ENTRY_U64_SIZE: usize>(
         .for_each(|(bucket_idx, bucket)| {
             let server_key = &server_keys[bucket_idx]; // Keys for this server, this bucket
             // Precompute seeds for the current key
-            let precomputed_seeds = dpf_eval_xor_bytes_full_optimized(server_key, hs_key, aes);
+            let precomputed_seeds = dpf_eval_xor_array_full_optimized(server_key, hs_key, aes);
 
             // Inner loop over DB entries in the bucket
             for (local_idx, db_entry) in bucket.iter_mut().enumerate() {

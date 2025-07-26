@@ -1,13 +1,107 @@
-# KPIR - Key-Value PIR Implementation
+# MS KPIR - Multi Server Key-Value PIR Implementation
 
-This project implements four Private Information Retrieval (PIR) schemes for key-value stores:
+> **Recommended:**  
+> For most users, we recommend using the **bit-optimized versions** of the schemes, as they are more performant.  
+> - [Bit-Optimized Regular Scheme](#bit-optimized-regular-scheme-kpir_bit_opt)
+> - [Bit-Optimized Private Update Scheme](#bit-optimized-private-update-scheme-kpir_bit_opt_priv_upt)
 
-1. A regular scheme with non-private updates (kpir)
-2. An advanced scheme with private updates (kpir_priv_upt)
-3. A bit-optimized regular scheme (kpir_bit_opt)
-4. A bit-optimized scheme with private updates (kpir_bit_opt_priv_upt)
+This project implements four Multi Server Private Information Retrieval (PIR) schemes for key-value stores:
 
-## Prerequisites
+1. A regular scheme with non-private updates (`kpir`)
+2. An advanced scheme with private updates (`kpir_priv_upt`)
+3. A bit-optimized regular scheme (`kpir_bit_opt`) - **[Recommended, see details](#bit-optimized-regular-scheme-kpir_bit_opt)**
+4. A bit-optimized scheme with private updates (`kpir_bit_opt_priv_upt`) - **[Recommended, see details](#bit-optimized-private-update-scheme-kpir_bit_opt_priv_upt)**
+
+---
+
+## Project Structure
+
+| Folder/File                | Description |
+|----------------------------|-------------|
+| `benches/`                 | Benchmark code (uses localhost by default; change IPs in bench files for remote) |
+| `cuckoo_lib/`              | Encode/decode functions for key-value strings to integer arrays. Contains `CuckooHashTableBucketed` (main), `CuckooHashTableBucketedAdditiveShare` (for 4-server version), and legacy `CuckooHashTable` (reference which we improved upon). |
+| `data/`                    | Benchmark result files and helper Python scripts for generating dummy data and testing configuration values. |
+| `dpf_half_tree_lib/`       | Implementation of the Half-Tree DPF from: Xiaojie Guo et al., EUROCRYPT 2023 ([paper link](https://doi.org/10.1007/978-3-031-30545-0_12)). |
+| `dpf_half_tree_bit_lib/`   | Bit-optimized version of the Half-Tree DPF implementation. |
+| `proto/`                   | Protocol buffer files; the foundation for all schemes. |
+| `src/`                     | Source files for the regular scheme. |
+| `src/bin/kpir_bit_opt/`    | Source files for the bit-optimized regular scheme. |
+| `src/bin/kpir_priv_upt/`   | Source files for the four-server scheme with private updates. |
+| `src/bin/kpir_bit_opt_priv_upt/` | Source files for the bit-optimized private update scheme. |
+| `.env` / `.example_env`    | Environment file for database/configuration and example env of how to write real env. |
+| `build.rs`                 | Builds proto files and parses env file to make constants available at runtime. |
+
+---
+
+## Setting Up Entry Size, Dummy Data, and Environment
+
+- **Entry Size & Storage:**  
+  Set `KPIR_STORAGE_MB` (in MB) and `KPIR_ENTRY_SIZE_BYTES` (in bytes) in your `.env` file.  
+  _Example: For 5 GiB storage and 1024B entry size:_  
+  ```
+  KPIR_STORAGE_MB=5120
+  KPIR_ENTRY_SIZE_BYTES=1024
+  ```
+  > **Note:** Entry size should be divisible by 8.
+
+- **Testing Table Size:**  
+  To see how many entries fit:
+  ```
+  python3 ./data/config_tester.py 5120MiB 1024B
+  # Output: n = 22 in 2^n = 4194304 entries
+  ```
+
+- **Testing Required Storage for a Table Size:**  
+  ```
+  python3 ./data/config_helper.py 20 256
+  # Output: Table size: 2^20 = 1048576 entries, Entry size: 256 bytes, Required storage: 256 MB
+  ```
+
+- **Environment Parsing:**  
+  The `build.rs` script parses your env file and makes these values available as constants at runtime.  
+  If you change the env file and the changes are not picked up, try clearing the build cache.
+
+- **IMPORTANT:**  
+  The encode/decode functions in `cuckoo_lib` add a 16-byte overhead to each entry.  
+  If you set `KPIR_ENTRY_SIZE_BYTES=1024`, your actual key+value in the CSV should be ≤1008 bytes.
+
+---
+
+## ⚠️ Compile Time Warning
+
+Compile times are slower than normal because the code is optimized for runtime performance.  
+We added flags in `Cargo.toml` for production builds.
+
+---
+
+## Notes for Repurposing for future
+
+1. **Encode/Decode Overhead:**  
+   The current encode/decode functions are generic and add a 16-byte overhead to support arbitrary string sizes.  
+   If you only need to support smaller entries, you can modify these functions in `cuckoo_lib` to reduce the overhead (e.g., to 4 bytes).
+
+2. **Async Client Requests:**  
+   All clients currently wait for each server response sequentially (to measure response times accurately on localhost, since we run all servers in the same machine).  
+   In real-world deployments, we have servers in different machines. Thus, you should send requests in parallel.  
+   See the commented-out code in the client:
+   ```rust
+   // // Wait for all server responses in parallel
+   // let answers = join_all(server_futures).await
+   //     .into_iter()
+   //     .collect::<Result<Vec<_>, _>>()?;
+
+   // Sequentially wait
+   let mut answers = Vec::new();
+   for future in server_futures {
+       let answer = future.await?;  
+       answers.push(answer);
+   }
+   ```
+   Replace the sequential loop with `join_all` for parallel requests in environment where servers are deployed to different machines.
+
+---
+
+## Main Prerequisites
 
 - Rust and Cargo installed
 - protoc for gRPC

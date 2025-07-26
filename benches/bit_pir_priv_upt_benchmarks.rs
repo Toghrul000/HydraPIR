@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Benchmark
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use kpir::ms_kpir::bit_optimized_pir_service_private_update_client::BitOptimizedPirServicePrivateUpdateClient;
-use kpir::ms_kpir::{bit_dpf_key, BucketBitOptimizedKeys, ClientSessionInitRequest, BitDpfKey, DpfKeyBytes, PrivUpdateRequest};
-use kpir::ms_kpir::dpf_key_bytes;
+use kpir::ms_kpir::{bit_dpf_key, BucketBitOptimizedKeys, ClientSessionInitRequest, BitDpfKey, DpfKeyArray, PrivUpdateRequest};
+use kpir::ms_kpir::dpf_key_array;
 use cuckoo_lib::{get_hierarchical_indices, encode_entry, Entry};
 use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_gen, dmpf_bit_pir_reconstruct_servers, dpf_priv_xor_update_gen_buckets};
 use rand::rngs::StdRng;
@@ -274,13 +274,13 @@ async fn execute_private_update(
                 };
 
                 let update_keys_proto = update_keys.iter().map(|key| {
-                    let cwn = dpf_key_bytes::Cwn {
+                    let cwn = dpf_key_array::Cwn {
                         hcw: key.cw_n.0.to_vec(),
                         lcw0: key.cw_n.1 as u32,
                         lcw1: key.cw_n.2 as u32,
                     };
 
-                    DpfKeyBytes {
+                    DpfKeyArray {
                         n: key.n as u32,
                         seed: key.seed.to_vec(),
                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
@@ -321,8 +321,7 @@ fn bench_dpf_key_generation(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("DPF Key Generation (Private Update)");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -362,8 +361,7 @@ fn bench_server_response_times(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Server Response Times (Private Update)");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -389,7 +387,6 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual Server Response Times (Private Update)");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 3 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for (group_idx, addr_chunk) in DEFAULT_SERVERS.chunks(2).enumerate() {
@@ -464,7 +461,6 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual Server Private Update");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 2 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for (group_idx, addr_chunk) in DEFAULT_SERVERS.chunks(2).enumerate() {
@@ -506,13 +502,13 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
                                 let mut client = BitOptimizedPirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
                                 
                                 let update_keys_proto = update_keys_for_server.iter().map(|key| {
-                                    let cwn = dpf_key_bytes::Cwn {
+                                    let cwn = dpf_key_array::Cwn {
                                         hcw: key.cw_n.0.to_vec(),
                                         lcw0: key.cw_n.1 as u32,
                                         lcw1: key.cw_n.2 as u32,
                                     };
 
-                                    DpfKeyBytes {
+                                    DpfKeyArray {
                                         n: key.n as u32,
                                         seed: key.seed.to_vec(),
                                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
@@ -547,8 +543,7 @@ fn bench_private_update(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Private Update");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(2, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -583,8 +578,7 @@ fn bench_reconstruction(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Reconstruction Time (Private Update)");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {

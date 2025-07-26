@@ -10,7 +10,6 @@ use rand::SeedableRng;
 use std::sync::Mutex;
 
 
-// --- Constants related to the Algorithm (can be adjusted here) ---
 // const MAX_DISPLACEMENTS: usize = 100;
 const MAX_DISPLACEMENTS: usize = 500;
 // const MAX_TRACKED_DISPLACEMENTS: usize = 500;
@@ -51,9 +50,7 @@ impl fmt::Display for CuckooError {
 // Implement Error trait so it can be potentially boxed or converted
 impl Error for CuckooError {}
 
-// --- Private Helper Functions ---
-
-/// Encodes (key: &str, value: &str) into a fixed-size Entry ([u64; N]).
+/// Encodes (key: &str, value: &str) into a fixed-size Entry ([u64; N]). (16 byte overhead, since each key and value length field is u64)
 pub fn encode_entry<const N: usize>(
     key: &str,
     value: &str,
@@ -220,11 +217,10 @@ pub fn get_hierarchical_indices(
 
 
 
-// Add these traits to make CuckooHashTable thread-safe
+// Traits to make CuckooHashTable thread-safe
 unsafe impl<const N: usize> Send for CuckooHashTableBucketed<N> {}
 unsafe impl<const N: usize> Sync for CuckooHashTableBucketed<N> {}
 
-// --- Cuckoo Hash Table ---
 #[derive(Debug)]
 pub struct CuckooHashTableBucketed<const N: usize> {
     pub table: Vec<Entry<N>>,
@@ -271,7 +267,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
         }
 
 
-        let mut rng = StdRng::from_os_rng(); // Correct way to get ThreadRng
+        let mut rng = StdRng::from_os_rng(); 
 
         let mut bucket_selection_key = [0u8; 16];
         rng.fill_bytes(&mut bucket_selection_key);
@@ -284,15 +280,10 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
             })
             .collect();
 
-        // println!("B key: {:?}", bucket_selection_key);
-        // for i in 0..k_choices {
-        //     println!("K {}: {:?}", i, local_hash_keys[i])
-        // }
-
         Ok(CuckooHashTableBucketed {
             table: vec![[0u64; N]; table_size],
             table_size,
-            mask: table_size - 1, // Mask for the global table
+            mask: table_size - 1, 
             k_choices,
             local_hash_keys,
             rng: Mutex::new(rng),
@@ -337,7 +328,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
         let potential_indices = self.get_hierarchical_indices(key);
 
         for &index in &potential_indices {
-            if index >= self.table_size { continue; } // Should not happen if logic is correct
+            if index >= self.table_size { continue; } 
 
             let entry_data = &self.table[index];
             if entry_data != &EMPTY_SLOT_N {
@@ -398,14 +389,14 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
 
         let mut displacement_path: Vec<(usize, Entry<N>)> = Vec::new();
         let mut visited: Option<HashSet<(String, usize)>> = None; // Tracks (key, global_index_tried)
-        let mut intended_path_for_visited_init: Vec<(String, usize)> = Vec::new(); // For initializing visited
+        let mut intended_path_for_visited_init: Vec<(String, usize)> = Vec::new(); 
 
         for displacement_count in 0..MAX_TRACKED_DISPLACEMENTS {
             let potential_indices = self.get_hierarchical_indices(&current_key);
 
             // Check for empty slot among hierarchical choices
             for &index in &potential_indices {
-                if index >= self.table_size { continue; } // Safety check
+                if index >= self.table_size { continue; }
                 if self.table[index] == EMPTY_SLOT_N {
                     // displacement_path.push((index, self.table[index])); // Log empty
                     self.table[index] = current_entry_data;
@@ -428,8 +419,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 }
                 
             }
-
-
 
             let evict_global_index = potential_indices[choice_idx_to_evict];
 
@@ -488,25 +477,20 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
 
     pub fn soft_delete(&mut self, key: &String) {
         let EMPTY_SLOT_N: Entry<N> = [0u64; N];
-
-        // Get all potential indices where the key could be stored
         let potential_indices = self.get_hierarchical_indices(&key);
-        
-        // Check each potential location
         for &index in &potential_indices {
-            if index >= self.table_size { continue; } // Safety check
+            if index >= self.table_size { continue; } 
             
             if self.table[index] != EMPTY_SLOT_N {
                 match decode_entry(&self.table[index]) {
                     Ok(Some((stored_key, _))) => {
                         if stored_key == *key {
-                            // Found the key, replace with empty slot
                             self.table[index] = EMPTY_SLOT_N;
                             return;
                         }
                     }
                     Ok(None) => continue,
-                    Err(_) => continue, // Skip on decode error
+                    Err(_) => continue, 
                 }
             }
         }
@@ -526,12 +510,11 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
 
         let potential_indices = self.get_hierarchical_indices(&current_key);
         for &index in &potential_indices {
-            if index >= self.table_size { continue; } // Safety check
+            if index >= self.table_size { continue; }
             if self.table[index] != EMPTY_SLOT_N {
                 match decode_entry(&self.table[index])? {
                     Some((stored_key, _)) => {
                         if stored_key == key {
-                            // Found existing entry with same key, update it
                             self.table[index] = current_entry_data;
                             return Ok(());
                         }
@@ -541,7 +524,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
             }
         }
 
-        Err(CuckooError::KeyNotFound(key)) // You'll need to define this error variant if not already
+        Err(CuckooError::KeyNotFound(key))
     }
 
 
@@ -564,7 +547,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 match decode_entry(&self.table[index])? {
                     Some((stored_key, _)) => {
                         if stored_key == key {
-                            // Found existing entry with same key, update it
                             self.table[index] = current_entry_data;
                             return Ok(());
                         }
@@ -583,7 +565,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
 
             // Check for empty slot among hierarchical choices
             for &index in &potential_indices {
-                if index >= self.table_size { continue; } // Safety check
+                if index >= self.table_size { continue; }
                 if self.table[index] == EMPTY_SLOT_N {
                     // displacement_path.push((index, self.table[index])); // Log empty
                     self.table[index] = current_entry_data;
@@ -599,8 +581,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                 current_key.hash(&mut hasher); // Hash current key
                 displacement_count.hash(&mut hasher); // Hash displacement count for variance
                 choice_idx_to_evict = hasher.finish() as usize % potential_indices.len();
-
-
             } else {
                 choice_idx_to_evict = {
                     let mut rng = self.rng.lock().unwrap();
@@ -675,7 +655,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
     /// using the current hierarchical configuration. Restores state if any part fails.
     pub fn rehash_with_failed(
         &mut self,
-        keys_failed_insertion: &Vec<(String, String)>, // Borrow the list
+        keys_failed_insertion: &Vec<(String, String)>,
     ) -> Result<(), CuckooError> {
         println!(
             "    -> Starting single rehash_with_failed attempt (k_choices: {}, buckets: {}, slots/bucket: {})...",
@@ -699,7 +679,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
             table: vec![[0u64; N]; self.table_size],
             table_size: self.table_size,
             mask: self.mask,
-            k_choices: self.k_choices, // Use current k_choices
+            k_choices: self.k_choices, 
             local_hash_keys: new_local_hash_keys.clone(), // Use new local keys
             rng: Mutex::new(StdRng::from_os_rng()), // Fresh rng for temp table operations
             num_total_buckets: self.num_total_buckets,
@@ -721,7 +701,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
             if entry_data != &EMPTY_SLOT_N {
                 match decode_entry(entry_data) {
                     Ok(Some((key, value))) => {
-                        // insert_tracked now uses hierarchical hashing internally
                         if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "(Phase 1) Failed re-insert key '{}': {:?}", key, insert_err
@@ -745,7 +724,7 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
         if let Some(err) = error_occurred {
             println!("    -> Rehash attempt failed during Phase 1. Restoring state.");
             self.table = old_table_data;
-            self.bucket_selection_key = old_bucket_selection_key; // Restore old keys
+            self.bucket_selection_key = old_bucket_selection_key;
             self.local_hash_keys = old_local_hash_keys;
             return Err(err);
         }
@@ -850,12 +829,10 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
                         "Loop failed after {} attempts with {} hashes (max allowed: {})",
                         max_attempts_per_config, self.k_choices, MAX_ALLOWED_HASHES
                     )),
-                    keys_failed_insertion // Return the list
+                    keys_failed_insertion
                 ));
             }
 
-
-            // Escalate k_choices
             self.k_choices += 1;
             println!(
                 "---> Escalating: Increasing k_choices to {}. Local hash keys regenerated.",
@@ -899,7 +876,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
             if entry_data != &EMPTY_SLOT_N {
                 match decode_entry(entry_data) {
                     Ok(Some((key, value))) => {
-                        // Use insert_tracked on the temp table (without deterministic seed for now)
                         if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "Failed re-insert key '{}': {:?}", key, insert_err
@@ -933,13 +909,6 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
             Ok(())
         }
     }
-
-    // rehash_loop, rehash_with_failed, rehash_loop_with_failed would need to be
-    // updated to correctly handle the new `k_choices` vs `num_hashes` distinction
-    // if `k_choices` becomes the thing to escalate. For now, assuming escalation
-    // would mean increasing `k_choices` (and thus `local_hash_keys` and bucket choices).
-    // This requires careful thought on how `MAX_ALLOWED_HASHES_ESCALATION` relates to `k_choices`.
-    // For simplicity, I'll adapt rehash_loop to escalate k_choices.
 
     pub fn rehash_loop(&mut self, max_attempts_per_config: usize) -> Result<(), CuckooError> {
         println!("--- Starting persistent rehash loop (max {} attempts per config) ---", max_attempts_per_config);
@@ -992,12 +961,9 @@ impl<const N: usize> CuckooHashTableBucketed<N> {
 
 
 
-
-
-
 pub type EntryAdditiveShare<const N: usize> = [i64; N];
 
-// Add these traits to make CuckooHashTable thread-safe
+// Traits to make CuckooHashTable thread-safe
 unsafe impl<const N: usize> Send for CuckooHashTableBucketedAdditiveShare<N> {}
 unsafe impl<const N: usize> Sync for CuckooHashTableBucketedAdditiveShare<N> {}
 
@@ -1048,7 +1014,7 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
         }
 
 
-        let mut rng = StdRng::from_os_rng(); // Correct way to get ThreadRng
+        let mut rng = StdRng::from_os_rng(); 
 
         let mut bucket_selection_key = [0u8; 16];
         rng.fill_bytes(&mut bucket_selection_key);
@@ -1130,10 +1096,8 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
 
         for displacement_count in 0..MAX_TRACKED_DISPLACEMENTS {
             let potential_indices = self.get_hierarchical_indices(&current_key);
-
-            // Check for empty slot among hierarchical choices
             for &index in &potential_indices {
-                if index >= self.table_size { continue; } // Safety check
+                if index >= self.table_size { continue; }
                 if self.table[index] == EMPTY_SLOT_N {
                     // displacement_path.push((index, self.table[index])); // Log empty
                     self.table[index] = current_entry_data;
@@ -1149,21 +1113,15 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
                 current_key.hash(&mut hasher); // Hash current key
                 displacement_count.hash(&mut hasher); // Hash displacement count for variance
                 choice_idx_to_evict = hasher.finish() as usize % potential_indices.len();
-
-
             } else {
                 choice_idx_to_evict = {
                     let mut rng = self.rng.lock().unwrap();
                     rng.random_range(0..potential_indices.len())
                 }
-                
             }
-
-
 
             let evict_global_index = potential_indices[choice_idx_to_evict];
 
-            // This check should ideally be redundant if get_hierarchical_indices is correct
             if evict_global_index >= self.table_size {
                  self.revert_changes(&displacement_path);
                  return Err(CuckooError::InsertionFailed(format!(
@@ -1253,12 +1211,12 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
             table: vec![[0i64; N]; self.table_size],
             table_size: self.table_size,
             mask: self.mask,
-            k_choices: self.k_choices, // Use current k_choices
-            local_hash_keys: new_local_hash_keys.clone(), // Use new local keys
-            rng: Mutex::new(StdRng::from_os_rng()), // Fresh rng for temp table operations
+            k_choices: self.k_choices, 
+            local_hash_keys: new_local_hash_keys.clone(),
+            rng: Mutex::new(StdRng::from_os_rng()), 
             num_total_buckets: self.num_total_buckets,
             slots_per_bucket: self.slots_per_bucket,
-            bucket_selection_key: new_bucket_selection_key, // Use new bucket key
+            bucket_selection_key: new_bucket_selection_key,
         };
 
         let old_table_data = std::mem::take(&mut self.table);
@@ -1276,7 +1234,6 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
                 let u64_entry_data = entry_data.map(|x| x as u64);
                 match decode_entry::<N>(&u64_entry_data) {
                     Ok(Some((key, value))) => {
-                        // insert_tracked now uses hierarchical hashing internally
                         if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "(Phase 1) Failed re-insert key '{}': {:?}", key, insert_err
@@ -1394,7 +1351,6 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
                 max_attempts_per_config, self.k_choices
             );
 
-            // Check if we can escalate
             if self.k_choices >= MAX_ALLOWED_HASHES {
                 eprintln!(
                     "---> Reached maximum allowed hash functions ({}) without success.",
@@ -1409,8 +1365,6 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
                 ));
             }
 
-
-            // Escalate k_choices
             self.k_choices += 1;
             println!(
                 "---> Escalating: Increasing k_choices to {}. Local hash keys regenerated.",
@@ -1438,11 +1392,11 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
             table_size: self.table_size,
             mask: self.mask,
             k_choices: self.k_choices,
-            local_hash_keys: new_local_hash_keys.clone(), // Use new local keys
-            rng: Mutex::new(StdRng::from_os_rng()), // Fresh rng for temp table
+            local_hash_keys: new_local_hash_keys.clone(),
+            rng: Mutex::new(StdRng::from_os_rng()), 
             num_total_buckets: self.num_total_buckets,
             slots_per_bucket: self.slots_per_bucket,
-            bucket_selection_key: new_bucket_selection_key, // Use new bucket key
+            bucket_selection_key: new_bucket_selection_key,
         };
 
         let old_table_data = std::mem::take(&mut self.table);
@@ -1455,7 +1409,6 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
                 let u64_entry_data = entry_data.map(|x| x as u64);
                 match decode_entry::<N>(&u64_entry_data) {
                     Ok(Some((key, value))) => {
-                        // Use insert_tracked on the temp table (without deterministic seed for now)
                         if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "Failed re-insert key '{}': {:?}", key, insert_err
@@ -1490,13 +1443,6 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
         }
     }
 
-    // rehash_loop, rehash_with_failed, rehash_loop_with_failed would need to be
-    // updated to correctly handle the new `k_choices` vs `num_hashes` distinction
-    // if `k_choices` becomes the thing to escalate. For now, assuming escalation
-    // would mean increasing `k_choices` (and thus `local_hash_keys` and bucket choices).
-    // This requires careful thought on how `MAX_ALLOWED_HASHES_ESCALATION` relates to `k_choices`.
-    // For simplicity, I'll adapt rehash_loop to escalate k_choices.
-
     pub fn rehash_loop(&mut self, max_attempts_per_config: usize) -> Result<(), CuckooError> {
         println!("--- Starting persistent rehash loop (max {} attempts per config) ---", max_attempts_per_config);
         loop {
@@ -1515,7 +1461,6 @@ impl<const N: usize> CuckooHashTableBucketedAdditiveShare<N> {
             }
             println!("--> All {} attempts failed with {} k_choices.", max_attempts_per_config, self.k_choices);
 
-            // Check if we can escalate
             if self.k_choices >= MAX_ALLOWED_HASHES {
                 eprintln!(
                     "---> Reached maximum allowed hash functions ({}) without success.",
@@ -1618,7 +1563,6 @@ pub fn calculate_required_table_size(
 // --- Cuckoo Hash Table OLD non bucketed ---
 
 /// A Cuckoo Hash Table storing key-value pairs with fixed-size entries.
-///
 /// Generic over `N`, the number of `u64` elements per entry.
 /// The total byte size per entry is `N * 8`.
 #[derive(Debug)]
@@ -1632,14 +1576,7 @@ pub struct CuckooHashTable<const N: usize> {
 }
 
 impl<const N: usize> CuckooHashTable<N> {
-    /// Creates a new CuckooHashTable.
-    ///
-    /// # Arguments
-    /// * `table_size` - The number of slots in the table. Must be a power of 2.
-    ///
-    /// # Errors
-    /// Returns an error string if `table_size` is not a power of 2,
-    /// if `N` (entry size in u64) is 0, or if internal checks fail.
+
     pub fn new(table_size: usize) -> Result<Self, String> {
         if !table_size.is_power_of_two() {
             return Err("Table size must be a power of 2".to_string());
@@ -1652,7 +1589,7 @@ impl<const N: usize> CuckooHashTable<N> {
              return Err("Entry byte size (N * 8) must be at least 4".to_string());
         }
 
-        let num_hashes = DEFAULT_NUM_HASHES; // Use default for now
+        let num_hashes = DEFAULT_NUM_HASHES; 
         if num_hashes == 0 {
             return Err("Number of hashes must be greater than 0".to_string());
         }
@@ -1667,7 +1604,7 @@ impl<const N: usize> CuckooHashTable<N> {
             .collect();
 
         Ok(CuckooHashTable { 
-            table: vec![[0u64; N]; table_size], // Initialize with N-sized zero arrays
+            table: vec![[0u64; N]; table_size], 
             table_size,
             mask: table_size - 1,
             num_hashes,
@@ -1686,7 +1623,7 @@ impl<const N: usize> CuckooHashTable<N> {
         (hasher.finish() as usize) & self.mask
     }
 
-    /// Calculates all possible indices for a given key. (Internal)
+    /// Calculates all possible indices for a given key.
     #[inline(always)]
     pub fn get_indices(&self, key: &str) -> Vec<usize> {
         (0..self.num_hashes).map(|i| self.hash(key, i)).collect()
@@ -1700,18 +1637,16 @@ impl<const N: usize> CuckooHashTable<N> {
 
     /// Looks up a key in the hash table. Returns the associated String value.
     pub fn lookup(&self, key: &str) -> Result<Option<String>, CuckooError> {
-        // Define empty slot locally based on N for comparison
         let EMPTY_SLOT_N: Entry<N> = [0u64; N];
 
         for i in 0..self.num_hashes {
             let index = self.hash(key, i);
-            // Bounds check (should be unnecessary due to mask, but good practice)
             if index >= self.table_size { continue; }
 
             let entry_data = &self.table[index];
 
             if entry_data != &EMPTY_SLOT_N {
-                 match decode_entry(entry_data)? { // Use generic decode_entry
+                 match decode_entry(entry_data)? { 
                     Some((stored_key, stored_value)) => {
                         if stored_key == key {
                             return Ok(Some(stored_value));
@@ -1724,13 +1659,12 @@ impl<const N: usize> CuckooHashTable<N> {
         Ok(None)
     }
 
-    /// Reverts changes made during a failed insertion attempt. (Internal)
+    /// Reverts changes made during a failed insertion attempt
     fn revert_changes(&mut self, path: &[(usize, Entry<N>)]) {
         for (index, original_data) in path.iter().rev() {
             if *index < self.table_size { // Bounds check before writing
                 self.table[*index] = *original_data;
             } else {
-                 // This indicates a serious internal logic error if it happens
                  eprintln!("Error: revert_changes attempted to write out of bounds index {}", index);
             }
         }
@@ -1775,8 +1709,6 @@ impl<const N: usize> CuckooHashTable<N> {
                     current_key = displaced_key; // Update key for next iteration
                     }
                     None => {
-                    // This implies we displaced an EMPTY_SLOT, which shouldn't happen
-                    // if the initial check didn't find an empty one. Or decode failed.
                     self.revert_changes(&displacement_path);
                     return Err(CuckooError::InsertionFailed(
                         "Displaced an entry that unexpectedly decoded as empty".to_string()
@@ -1796,10 +1728,9 @@ impl<const N: usize> CuckooHashTable<N> {
 
     /// Inserts a key-value pair (both Strings) using hybrid cycle detection.
     pub fn insert_tracked(&mut self, key: String, value: String, deterministic_eviction_seed: Option<&[u8; 16]>) -> Result<(), CuckooError> {
-        // Define empty slot locally based on N for comparison
         let EMPTY_SLOT_N: Entry<N> = [0u64; N];
 
-        let mut current_entry_data = encode_entry::<N>(&key, &value)?; // Use generic encode
+        let mut current_entry_data = encode_entry::<N>(&key, &value)?;
         let mut current_key = key.clone();
 
         let mut displacement_path: Vec<(usize, [u64; N])> = Vec::new();
@@ -1809,7 +1740,7 @@ impl<const N: usize> CuckooHashTable<N> {
         for displacement_count in 0..MAX_TRACKED_DISPLACEMENTS {
             for i in 0..self.num_hashes {
                 let index = self.hash(&current_key, i);
-                 if index >= self.table_size { continue; } // Bounds check
+                 if index >= self.table_size { continue; } 
                 if self.table[index] == EMPTY_SLOT_N {
                     displacement_path.push((index, self.table[index]));
                     self.table[index] = current_entry_data;
@@ -1820,7 +1751,6 @@ impl<const N: usize> CuckooHashTable<N> {
             // Determine eviction target
             let evict_hash_index: usize;
             if let Some(seed) = deterministic_eviction_seed {
-                // Deterministic eviction choice
                 let mut hasher = SipHasher24::new_with_key(seed);
                 current_key.hash(&mut hasher); // Hash current key
                 displacement_count.hash(&mut hasher); // Hash displacement count for variance
@@ -1835,8 +1765,7 @@ impl<const N: usize> CuckooHashTable<N> {
             
             let evict_index = self.hash(&current_key, evict_hash_index);
              if evict_index >= self.table_size {
-                 // Should not happen with correct masking, indicates potential issue
-                 self.revert_changes(&displacement_path); // Revert previous steps if any
+                 self.revert_changes(&displacement_path);
                  return Err(CuckooError::InsertionFailed(format!(
                     "Internal error: Calculated eviction index {} out of bounds for key '{}'",
                     evict_index, current_key
@@ -1871,7 +1800,7 @@ impl<const N: usize> CuckooHashTable<N> {
 
             // Update current key/entry
             current_entry_data = displaced_entry_data;
-            match decode_entry(&current_entry_data)? { // Use generic decode
+            match decode_entry(&current_entry_data)? { 
                  Some((displaced_key, _)) => current_key = displaced_key,
                  None => {
                     self.revert_changes(&displacement_path);
@@ -1888,14 +1817,6 @@ impl<const N: usize> CuckooHashTable<N> {
         )))
     }
 
-
-    /// Inserts a key-value pair (both Strings) using hybrid cycle detection,
-    /// and returns a log of changes made to the table upon successful insertion.
-    ///
-    /// # Returns
-    /// * `Ok(Vec<(usize, Entry<N>)>)` - On success, a vector where each tuple is
-    ///   `(index_modified, new_value_written_to_index)`.
-    /// * `Err(CuckooError)` - If insertion fails.
     pub fn insert_tracked_with_log(
         &mut self,
         key: String,
@@ -1918,7 +1839,7 @@ impl<const N: usize> CuckooHashTable<N> {
             // --- Phase 1 & 2: Check for empty slot ---
             for i in 0..self.num_hashes {
                 let index = self.hash(&current_key, i);
-                if index >= self.table_size { continue; } // Bounds check
+                if index >= self.table_size { continue; }
 
                 if self.table[index] == EMPTY_SLOT_N {
                     // Found an empty slot. This is the final placement for current_entry_data.
@@ -1956,7 +1877,7 @@ impl<const N: usize> CuckooHashTable<N> {
                 }
                 if let Some(ref mut visited_set) = visited {
                     if visited_set.contains(&target_key_index_pair) {
-                        self.revert_changes(&displacement_path); // Revert all previous displacements
+                        self.revert_changes(&displacement_path); 
                         return Err(CuckooError::InsertionFailed(format!(
                             "Cycle detected for key '{}' at index {}", current_key, evict_index
                         )));
@@ -1990,7 +1911,7 @@ impl<const N: usize> CuckooHashTable<N> {
                     ));
                  }
             }
-        } // End displacement loop
+        } 
 
         // If loop finishes, MAX_TRACKED_DISPLACEMENTS reached
         self.revert_changes(&displacement_path); // Revert all changes made
@@ -2001,7 +1922,6 @@ impl<const N: usize> CuckooHashTable<N> {
 
     /// Calculates the current load factor (0.0 to 1.0).
     pub fn load_factor(&self) -> f64 {
-        // Define empty slot locally based on N for comparison
         let EMPTY_SLOT_N: Entry<N> = [0u64; N];
         let filled_slots = self
             .table
@@ -2030,7 +1950,6 @@ impl<const N: usize> CuckooHashTable<N> {
             new_keys.push(key);
         }
 
-        // Create a temporary table *of the same generic type*
         let mut temp_cuckoo: CuckooHashTable<N> = CuckooHashTable {
             table: vec![[0u64; N]; self.table_size],
             table_size: self.table_size,
@@ -2045,12 +1964,10 @@ impl<const N: usize> CuckooHashTable<N> {
         let mut error_occurred: Option<CuckooError> = None;
 
         for entry_data in old_table_data.iter() {
-            // Define empty slot locally based on N for comparison
             let EMPTY_SLOT_N: Entry<N> = [0u64; N];
             if entry_data != &EMPTY_SLOT_N {
-                match decode_entry(entry_data) { // Use generic decode
+                match decode_entry(entry_data) {
                     Ok(Some((key, value))) => {
-                        // Use insert_tracked on the temp table
                         if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value, None) {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "Failed re-insert key '{}': {:?}", key, insert_err
@@ -2073,15 +1990,14 @@ impl<const N: usize> CuckooHashTable<N> {
 
         if let Some(err) = error_occurred {
             println!("---> Rehash failed. Restoring original table state.");
-            self.table = old_table_data; // Restore original table data
-            // Keys are implicitly restored as self.hash_keys wasn't updated yet
+            self.table = old_table_data; 
             Err(err)
         } else {
             println!(
                 "---> Rehash successful. {} items re-inserted.", rehashed_count
             );
-            self.table = temp_cuckoo.table; // Keep the new table
-            self.hash_keys = new_keys; // Update the keys
+            self.table = temp_cuckoo.table;
+            self.hash_keys = new_keys;
             Ok(())
         }
     }
@@ -2121,54 +2037,41 @@ impl<const N: usize> CuckooHashTable<N> {
                 // Call the standard rehash function
                 match self.rehash() {
                     Ok(_) => {
-                        // Success! self.rehash() already updated the table and keys.
                         println!(
                             "---> Rehash loop successful after {} attempts with {} hashes.",
                             attempt + 1,
                             self.num_hashes
                         );
-                        return Ok(()); // Exit the loop and function successfully
+                        return Ok(()); 
                     }
-                    Err(e) => {
-                        // Log the specific error from this rehash attempt
+                    Err(e) => {    
                         eprintln!("   Rehash attempt failed: {}", e);
-                        // self.rehash() should have restored the state, so we can try again.
-                        // If the error was fatal (e.g., decode error), it will likely repeat,
-                        // but we still allow `max_attempts_per_config`.
                     }
                 }
-            } // End inner attempt loop
+            } 
 
-            // If we exit the inner loop, all attempts for the current num_hashes failed.
             println!(
                 "---> All {} attempts failed with {} hash functions.",
                 max_attempts_per_config, self.num_hashes
             );
 
-            // Check if we can escalate by increasing num_hashes
-            // if self.num_hashes >= MAX_ALLOWED_HASHES {
-            //     eprintln!(
-            //         "---> Reached maximum allowed hash functions ({}) without success.",
-            //         MAX_ALLOWED_HASHES
-            //     );
-            //     // The table state is consistent from the last failed rehash attempt.
-            //     return Err(CuckooError::RehashFailed(format!(
-            //         "Rehash loop failed after {} attempts with {} hashes (max allowed: {}).",
-            //         max_attempts_per_config, self.num_hashes, MAX_ALLOWED_HASHES
-            //     )));
-            // }
+            if self.num_hashes >= MAX_ALLOWED_HASHES {
+                eprintln!(
+                    "---> Reached maximum allowed hash functions ({}) without success.",
+                    MAX_ALLOWED_HASHES
+                );
+                return Err(CuckooError::RehashFailed(format!(
+                    "Rehash loop failed after {} attempts with {} hashes (max allowed: {}).",
+                    max_attempts_per_config, self.num_hashes, MAX_ALLOWED_HASHES
+                )));
+            }
 
-            // Escalate: Increase num_hashes
-            // Note: We only increase num_hashes. The next call to self.rehash()
-            // inside the loop will handle generating the correct number of new keys.
             self.num_hashes += 1;
             println!(
                 "---> Escalating: Increasing number of hash functions to {}.",
                 self.num_hashes
             );
-            // Continue the outer loop to try rehashing with the new num_hashes
-
-        } // End outer loop
+        } 
     }
 
 
@@ -2177,7 +2080,7 @@ impl<const N: usize> CuckooHashTable<N> {
     /// Restores state if any part fails.
     pub fn rehash_with_failed(
         &mut self,
-        keys_failed_insertion: &Vec<(String, String)>, // Borrow the list
+        keys_failed_insertion: &Vec<(String, String)>,
     ) -> Result<(), CuckooError> {
         // --- Phase 1: Rehash existing items (similar to rehash) ---
         println!("    -> Starting single rehash_with_failed attempt...");
@@ -2195,8 +2098,8 @@ impl<const N: usize> CuckooHashTable<N> {
             table_size: self.table_size,
             mask: self.mask,
             num_hashes: self.num_hashes,
-            hash_keys: new_keys.clone(), // Use new keys for temp table
-            rng: Mutex::new(StdRng::from_os_rng()), // Fresh rng for temp table operations
+            hash_keys: new_keys.clone(), 
+            rng: Mutex::new(StdRng::from_os_rng()),
         };
 
         let old_table_data = std::mem::take(&mut self.table);
@@ -2213,7 +2116,7 @@ impl<const N: usize> CuckooHashTable<N> {
                             error_occurred = Some(CuckooError::RehashFailed(format!(
                                 "(Phase 1) Failed re-insert key '{}': {:?}", key, insert_err
                             )));
-                            break; // Stop this attempt
+                            break;
                         } else {
                             rehashed_count += 1;
                         }
@@ -2223,7 +2126,7 @@ impl<const N: usize> CuckooHashTable<N> {
                         error_occurred = Some(CuckooError::RehashFailed(format!(
                             "(Phase 1) Failed decode: {:?}", decode_err
                         )));
-                        break; // Stop this attempt
+                        break;
                     }
                 }
             }
@@ -2232,8 +2135,7 @@ impl<const N: usize> CuckooHashTable<N> {
         // If Phase 1 failed, restore and return error
         if let Some(err) = error_occurred {
             println!("    -> Rehash attempt failed during Phase 1 (rehashing existing). Restoring state.");
-            self.table = old_table_data; // Restore original table
-            // self.hash_keys remain the old ones
+            self.table = old_table_data; 
             return Err(err);
         }
         println!("    -> Phase 1 successful ({} existing items placed).", rehashed_count);
@@ -2242,13 +2144,12 @@ impl<const N: usize> CuckooHashTable<N> {
         // --- Phase 2: Try inserting the previously failed items ---
         println!("    -> Starting Phase 2: Inserting {} previously failed items...", keys_failed_insertion.len());
         let mut failed_inserted_count = 0;
-        for (key, value) in keys_failed_insertion.iter() { // Iterate over borrowed list
+        for (key, value) in keys_failed_insertion.iter() {
              if let Err(insert_err) = temp_cuckoo.insert_tracked(key.clone(), value.clone(), None) {
-                 // If inserting a previously failed item fails *now*, the whole attempt fails
                  error_occurred = Some(CuckooError::RehashFailed(format!(
                      "(Phase 2) Failed inserting previously failed key '{}': {:?}", key, insert_err
                  )));
-                 break; // Stop this attempt
+                 break;
              } else {
                  failed_inserted_count += 1;
              }
@@ -2258,18 +2159,16 @@ impl<const N: usize> CuckooHashTable<N> {
         if let Some(err) = error_occurred {
             // Phase 2 failed, restore original state and return error
             println!("    -> Rehash attempt failed during Phase 2 (inserting failed items). Restoring state.");
-            self.table = old_table_data; // Restore original table
-            // self.hash_keys remain the old ones
+            self.table = old_table_data; 
             Err(err)
         } else {
-            // Both phases successful! Commit the changes.
             println!(
                 "    -> Phase 2 successful ({} previously failed items placed).",
                 failed_inserted_count
             );
             println!("    -> Single rehash_with_failed attempt successful.");
-            self.table = temp_cuckoo.table; // Keep the new table
-            self.hash_keys = new_keys; // Update the keys
+            self.table = temp_cuckoo.table; 
+            self.hash_keys = new_keys; 
             Ok(())
         }
     }
@@ -2300,84 +2199,72 @@ impl<const N: usize> CuckooHashTable<N> {
 
         if keys_failed_insertion.is_empty() {
             println!("--- No failed items provided, attempting standard rehash loop ---");
-            // Fallback to standard rehash_loop logic if no failed items given
              return self.rehash_loop(max_attempts_per_config)
-                 .map_err(|e| (e, keys_failed_insertion)); // Still return tuple format
+                 .map_err(|e| (e, keys_failed_insertion));
         }
 
         let initial_num_failed = keys_failed_insertion.len();
 
-        loop { // Outer loop for escalating num_hashes
+        loop { 
             println!(
                 "---> Attempting rehash_with_failed using {} hash functions...",
                 self.num_hashes
             );
-
-            // Inner loop: Try multiple times with current config
             for attempt in 0..max_attempts_per_config {
                 println!(
                     "  Attempt {}/{} with {} hashes (targeting {} failed items)...",
                     attempt + 1,
                     max_attempts_per_config,
                     self.num_hashes,
-                    initial_num_failed // Use initial count for logging clarity
+                    initial_num_failed 
                 );
 
-                // Call the helper function for one full attempt
-                match self.rehash_with_failed(&keys_failed_insertion) { // Pass borrow
+                match self.rehash_with_failed(&keys_failed_insertion) { 
                     Ok(_) => {
-                        // Success! Helper updated the table and keys. Failed items are in.
                         println!(
                             "---> Rehash loop WITH FAILED items successful after {} attempts with {} hashes.",
                             attempt + 1,
                             self.num_hashes
                         );
-                        // *** Clear the vector now that items are successfully integrated ***
                         keys_failed_insertion.clear();
-                        return Ok(()); // Exit successfully
+                        return Ok(()); 
                     }
                     Err(e) => {
-                        // Log the specific error from this attempt
                         eprintln!("   Attempt failed: {}", e);
                     }
                 }
-            } // End inner attempt loop
+            } 
 
-            // All attempts for the current num_hashes failed.
             println!(
                 "---> All {} attempts failed with {} hash functions.",
                 max_attempts_per_config, self.num_hashes
             );
 
-            // // Check if we can escalate
-            // if self.num_hashes >= MAX_ALLOWED_HASHES {
-            //     eprintln!(
-            //         "---> Reached maximum allowed hash functions ({}) without success.",
-            //         MAX_ALLOWED_HASHES
-            //     );
-            //     // Return the last error and the original list of failed items
-            //     return Err((
-            //         CuckooError::RehashFailed(format!(
-            //             "Loop failed after {} attempts with {} hashes (max allowed: {}). Last error: {}",
-            //             max_attempts_per_config, self.num_hashes, MAX_ALLOWED_HASHES, last_error
-            //         )),
-            //         keys_failed_insertion // Return the list
-            //     ));
-            // }
+            // Check if we can escalate
+            if self.num_hashes >= MAX_ALLOWED_HASHES {
+                eprintln!(
+                    "---> Reached maximum allowed hash functions ({}) without success.",
+                    MAX_ALLOWED_HASHES
+                );
+                return Err((
+                    CuckooError::RehashFailed(format!(
+                        "Loop failed after {} attempts with {} hashes (max allowed: {})",
+                        max_attempts_per_config, self.num_hashes, MAX_ALLOWED_HASHES
+                    )),
+                    keys_failed_insertion 
+                ));
+            }
 
-            // Escalate
             self.num_hashes += 1;
             println!(
                 "---> Escalating: Increasing number of hash functions to {}.",
                 self.num_hashes
             );
-            // Continue outer loop
-        } // End outer loop
+        }
     }
 
     /// Resets all entries in the hash table to the empty state.
     pub fn purge_table(&mut self) {
-        // Define empty slot locally based on N
         let EMPTY_SLOT_N: Entry<N> = [0u64; N];
         println!("---> Purging table (clearing all entries)...");
         for entry in self.table.iter_mut() {
@@ -2390,6 +2277,6 @@ impl<const N: usize> CuckooHashTable<N> {
     }
 }
 
-// Add these traits to make CuckooHashTable thread-safe
+// Traits to make CuckooHashTable thread-safe
 unsafe impl<const N: usize> Send for CuckooHashTable<N> {}
 unsafe impl<const N: usize> Sync for CuckooHashTable<N> {}

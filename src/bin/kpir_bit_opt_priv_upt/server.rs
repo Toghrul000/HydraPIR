@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_eval_additive, dpf_priv_xor_update_additive_buckets, BitDPFKey, DPFKeyBytes};
+use dpf_half_tree_bit_lib::{dmpf_bit_pir_query_eval_additive, dpf_priv_xor_update_additive_buckets, BitDPFKey, DPFKeyArray};
 use dpf_half_tree_lib::calculate_pir_config;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -149,6 +149,7 @@ fn spawn_share_streaming_task(
 
 
 pub type EntryI64<const N: usize> = [i64; N];
+
 // Creates two XOR additive shares from an i64 array.
 fn create_i64_xor_additive_shares<const N: usize>(
     original_values: &EntryI64<N>,
@@ -157,8 +158,8 @@ fn create_i64_xor_additive_shares<const N: usize>(
     let mut share1 = [0i64; N];
     let mut share2 = [0i64; N];
     for i in 0..N {
-        share1[i] = rng.next_u64() as i64; // Generate a pseudo-random i64
-        share2[i] = original_values[i] ^ share1[i]; // XOR operation instead of subtraction
+        share1[i] = rng.next_u64() as i64;
+        share2[i] = original_values[i] ^ share1[i]; 
     }
     (share1, share2)
 }
@@ -231,8 +232,7 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
         let cuckoo_table = self.cuckoo_table.lock().await;
         let num_buckets = *self.num_buckets.lock().await;
         let bucket_size = *self.bucket_size.lock().await;
-        
-        // Convert protobuf DPFKey to Rust DPFKey
+
         let dpf_keys = bucket_keys.into_iter().map(|proto_key| {
             let mut cw_levels = Vec::new();
             for cw in proto_key.cw_levels {
@@ -264,8 +264,7 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
                 cw_np1: proto_key.cw_np1.try_into().unwrap(),
             })
         }).collect::<Result<Vec<_>, _>>()?;
-        
-        // Evaluate the query - using references to table and other data
+
         let results = dmpf_bit_pir_query_eval_additive::<ENTRY_U64_COUNT>(
             server_id,
             &dpf_keys,
@@ -275,15 +274,13 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             &hash_key,
             &aes,
         );
-        
-        // Convert to protobuf response format
+
         let bucket_results = results.into_iter().map(|result| {
             BucketEvalResult {
                 value: result.to_vec(),
             }
         }).collect();
-        
-        // Return the server response
+
         let answer = ServerResponse {
             bucket_result: bucket_results,
         };
@@ -308,19 +305,16 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             Status::not_found(format!("Client session not found: {}", client_id))
         })?;
         
-        // Convert to fixed-size array - no need to clone since we're converting to fixed size
         let hs_key: [u8; 16] = session.hs_key.as_slice().try_into().map_err(|_| {
             Status::internal("Invalid hash key size")
         })?;
         
-        // Create AES instance - no need to clone since we're converting to fixed size
         let aes_key: [u8; 16] = session.aes_key.as_slice().try_into().map_err(|_| {
             Status::internal("Invalid AES key size")
         })?;
         let aes = create_aes(&aes_key);
 
-        let update_dpf_keys: Vec<DPFKeyBytes<ENTRY_U64_COUNT>> = update_keys.iter().map(|update_key| {
-            // Convert protobuf DPFKey to Rust DPFKey
+        let update_dpf_keys: Vec<DPFKeyArray<ENTRY_U64_COUNT>> = update_keys.iter().map(|update_key| {
             let mut cw_levels = Vec::new();
             for cw in &update_key.cw_levels {
                 let level: [u8; 16] = cw.as_slice().try_into().map_err(|_| {
@@ -343,7 +337,7 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             
             let cw_n = (hcw, cw_n_proto.lcw0 as u8, cw_n_proto.lcw1 as u8);
             
-            DPFKeyBytes {
+            DPFKeyArray {
                 n: update_key.n as usize,
                 seed,
                 cw_levels,
@@ -565,7 +559,7 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
         // --- Iterate through the local table, generate shares, and send to channels ---
         let table_arc = Arc::clone(&self.cuckoo_table);
         // Process in batches to manage lock duration and provide backpressure via channels
-        const BATCH_SIZE_PROCESSING: usize = 1000; // Adjust as needed
+        const BATCH_SIZE_PROCESSING: usize = 1000;
         let mut i = 0;
         let mut rng = StdRng::from_os_rng(); // Create RNG for share generation
 
@@ -584,7 +578,6 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             { // Lock scope for reading original data and modifying S1's local table
                 let mut table_lock = table_arc.lock().await;
                 for idx in i..end {
-                    // Assuming table_lock.table[idx] contains original data (cast to i64)
                     let original_entry_as_i64 = table_lock.table[idx].clone();
 
                     // Shares for S1 (local) and S2
@@ -625,8 +618,7 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             for share in s2_batch_shares {
                 if s2_tx.send(share).await.is_err() {
                     eprintln!("S1: S2 channel closed prematurely. Aborting S2 send.");
-                    // Optionally, could try to signal other tasks to stop or just log
-                    break; // Stop sending to this channel
+                    break; 
                 }
             }
             for share in s3_batch_shares {
@@ -643,7 +635,7 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             }
 
             i = end;
-            if i % (BATCH_SIZE_PROCESSING * 10) == 0 { // Log less frequently
+            if i % (BATCH_SIZE_PROCESSING * 10) == 0 { 
                 println!(
                     "S1: Processed and queued shares for {} / {} entries.",
                     i, original_table_len
@@ -674,7 +666,6 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
                 }
             }
             Err(join_err) => {
-                // This error is if one of the tasks panicked
                 return Err(Status::internal(format!(
                     "Error joining server sync tasks: {}",
                     join_err
@@ -715,8 +706,6 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             message: "Configuration sent successfully".to_string(),
         }))
     }
-
-
 
 
     async fn stream_byte_share_arrays(
@@ -774,13 +763,11 @@ impl BitOptimizedPirServicePrivateUpdate for MyPIRService {
             println!("Initialized session for client: {}", client_id);
         }
         
-        // Return PIR configuration parameters
         let num_buckets = *self.num_buckets.lock().await as u32;
         let bucket_size = *self.bucket_size.lock().await as u32;
         let bucket_bits = *self.bucket_bits.lock().await;
         let n_bits = *self.n_bits.lock().await;
         
-        // Get hash keys from Cuckoo table
         let hash_keys = {
             let cuckoo_table = self.cuckoo_table.lock().await;
 

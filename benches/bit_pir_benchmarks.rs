@@ -35,17 +35,13 @@ pub struct ClientSession {
 // Initialize a new client session with the servers
 pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, Box<dyn std::error::Error>> {
     // Generate a unique client ID
-    let client_id = Uuid::new_v4().to_string();
-    
+    let client_id = Uuid::new_v4().to_string(); 
     let mut rng = StdRng::from_os_rng();
-    // Generate random AES key and hash key
     let mut aes_key_bytes = [0u8; 16];
     rng.fill_bytes(&mut aes_key_bytes);
-    
     let mut hash_key = [0u8; 16];
     rng.fill_bytes(&mut hash_key);
     
-    // Create a session with default values that will be updated
     let mut session = ClientSession {
         client_id: client_id.clone(),
         aes_key: aes_key_bytes,
@@ -97,7 +93,6 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
         } else if i > 0 {
             // For subsequent servers, check if their keys are different from first server's keys
             if let Some((first_local_hash_keys, first_bucket_selection_key)) = &first_server_keys {
-                // Check if either the local hash keys or bucket selection key is different
                 let keys_are_different = 
                     // Check if lengths are different
                     response_inner.local_hash_keys.len() != first_local_hash_keys.len() ||
@@ -154,7 +149,6 @@ pub async fn execute_pir_query_and_display_results(
 
     let target_points: Vec<u32> = global_indexes.iter().map(|x| *x as u32).collect();
     
-    // Get AES instance - needed for the DPF
     let aes = create_aes(&session.aes_key);
 
     let client_keys = dmpf_bit_pir_query_gen(&target_points, session.num_buckets as usize, session.bucket_size as usize, session.bucket_bits, &session.hash_key, &aes);
@@ -169,14 +163,12 @@ pub async fn execute_pir_query_and_display_results(
             
             // Convert Rust DPFKey to protobuf DPFKey
             let proto_bucket_keys = client_keys_for_server.clone().iter().map(|key| {
-                // Try with just the struct name, let Rust use the import correctly
                 let cwn = bit_dpf_key::Cwn {
                     hcw: key.cw_n.0.to_vec(),
                     lcw0: key.cw_n.1 as u32,
                     lcw1: key.cw_n.2 as u32,
                 };
                 
-                // Create the DPFKey
                 BitDpfKey {
                     n: key.n as u32,
                     seed: key.seed.to_vec(),
@@ -186,7 +178,6 @@ pub async fn execute_pir_query_and_display_results(
                 }
             }).collect();
 
-            // Create BucketKeys request
             let request = tonic::Request::new(BucketBitOptimizedKeys {
                 client_id: session.client_id.clone(),
                 server_id: i as u32,
@@ -203,12 +194,10 @@ pub async fn execute_pir_query_and_display_results(
     // Sequentially wait
     let mut answers = Vec::new();
     for future in server_futures {
-        let answer = future.await?;  // Propagate error if any
+        let answer = future.await?; 
         answers.push(answer);
     }
 
-    // Convert the received answers to the format expected by dmpf_pir_reconstruct_servers
-    // We need to convert from ServerResponse to Vec<Vec<[i64; N]>>
     let all_server_results: Vec<Vec<[i64; ENTRY_U64_COUNT]>> = answers.into_iter().map(|server_response| {
         server_response.bucket_result.into_iter().map(|bucket_result| {
             let mut array = [0i64; ENTRY_U64_COUNT];
@@ -221,17 +210,14 @@ pub async fn execute_pir_query_and_display_results(
         }).collect()
     }).collect();
 
-    // Run reconstruction
     let final_slots = dmpf_bit_pir_reconstruct_servers::<ENTRY_U64_COUNT>(
         &all_server_results,
         session.num_buckets as usize,
     );
 
-    // --- Display Final Results ---
+
     let mut query_result = None;
-    //println!("Reconstructed results per bucket:");
-    
-    // Calculate which bucket each global index belongs to
+
     let bucket_size = session.bucket_size as usize;
     let bucket_to_global_index = global_indexes.iter().map(|&global_idx| {
         let bucket_idx = global_idx / bucket_size;
@@ -247,8 +233,6 @@ pub async fn execute_pir_query_and_display_results(
         // Use the decode_entry from cuckoo_lib to decode the entry
         match cuckoo_lib::decode_entry(slot) {
             Ok(Some((key, value))) => {
-                //println!("  Bucket {}: key=\"{}\", value=\"{}\"", bucket_idx, key, value);
-                // Check if this is the key we queried for
                 if key == input_query_key && global_index.is_some() {
                     query_result = Some((global_index.unwrap(), value, slot.clone()));
                 }
@@ -324,7 +308,6 @@ fn bench_dpf_key_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("DPF Key Generation");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 5 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -365,7 +348,6 @@ fn bench_server_response_times(c: &mut Criterion) {
     let mut group = c.benchmark_group("Server Response Times");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 5 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -391,7 +373,6 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
     let mut group = c.benchmark_group("Individual Server Response Times");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 5 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for (server_idx, &server_addr) in DEFAULT_SERVERS.iter().enumerate() {
@@ -401,8 +382,7 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
                 b.iter(|| {
                     rt.block_on(async {
                         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await.expect("Failed to connect to server");
-                        
-                        // Generate the query for this server
+
                         let global_indexes = get_hierarchical_indices(
                             &session.bucket_selection_key,
                             &session.local_hash_keys,
@@ -465,7 +445,6 @@ fn bench_reconstruction(c: &mut Criterion) {
     let mut group = c.benchmark_group("Reconstruction Time");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 5 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {

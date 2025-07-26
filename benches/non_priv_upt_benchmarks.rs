@@ -21,7 +21,6 @@ pub async fn update_servers(
     server_addresses: &[String],
     upsert: bool,
 ) -> Result<(), Box<dyn Error>> {
-    // First check if we have any server addresses
     if server_addresses.is_empty() {
         return Err(Box::<dyn Error>::from("No server addresses provided"));
     }
@@ -31,13 +30,11 @@ pub async fn update_servers(
     for server_addr in server_addresses{
         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
     
-        // Create the CsvRow for the single key-value pair
         let csv_row = CsvRow {
             key: key.clone(),
             value: value.clone(),
         };
         
-        // Create the UpdateSingleEntryRequest
         let update_request = UpdateSingleEntryRequest {
             csv_row: Some(csv_row),
             deterministic_eviction_seed: seed.to_vec(),
@@ -58,24 +55,19 @@ pub async fn insert_servers(
     value: String,
     server_addresses: &[String],
 ) -> Result<(), Box<dyn Error>> {
-
-    // First check if we have any server addresses
     if server_addresses.is_empty() {
         return Err(Box::<dyn Error>::from("No server addresses provided"));
     }
 
-    // Connect to first server
     let seed: [u8; 16] = rand::rng().random();
     for server_addr in server_addresses{
         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
-    
-        // Create the CsvRow for the single key-value pair
+
         let csv_row = CsvRow {
             key: key.clone(),
             value: value.clone(),
         };
-        
-        // Create the InsertSingleEntryRequest
+
         let insert_request = InsertSingleEntryRequest {
             csv_row: Some(csv_row),
             deterministic_eviction_seed: seed.to_vec(),
@@ -94,16 +86,13 @@ pub async fn soft_delete_entry(
     key: String,
     server_addresses: &[String],
 ) -> Result<(), Box<dyn Error>> {
-
-    // First check if we have any server addresses
     if server_addresses.is_empty() {
         return Err(Box::<dyn Error>::from("No server addresses provided"));
     }
 
     for server_addr in server_addresses{
         let mut client = BitOptimizedPirServiceClient::connect(format!("http://{}", server_addr)).await?;
-    
-        // Create the soft delete request
+
         let soft_delete_request = SoftDeleteRequest {
             key: key.clone()
         };
@@ -128,20 +117,17 @@ pub struct ClientSession {
     pub entry_u64_count: usize,
 }
 
-// Initialize a new client session with the servers
+
 pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, Box<dyn std::error::Error>> {
-    // Generate a unique client ID
     let client_id = Uuid::new_v4().to_string();
     
     let mut rng = StdRng::from_os_rng();
-    // Generate random AES key and hash key
     let mut aes_key_bytes = [0u8; 16];
     rng.fill_bytes(&mut aes_key_bytes);
     
     let mut hash_key = [0u8; 16];
     rng.fill_bytes(&mut hash_key);
     
-    // Create a session with default values that will be updated
     let mut session = ClientSession {
         client_id: client_id.clone(),
         aes_key: aes_key_bytes,
@@ -154,7 +140,6 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
         entry_u64_count: 0,
     };
     
-    // Send session init request to each server
     let mut first_server_keys: Option<(Vec<Vec<u8>>, Vec<u8>)> = None;
     
     for (i, &addr) in server_addrs.iter().enumerate() {
@@ -186,19 +171,14 @@ pub async fn initialize_session(server_addrs: &[&str]) -> Result<ClientSession, 
                 response_inner.local_hash_keys.clone(),
                 response_inner.bucket_selection_key.clone()
             ));
-            // Now use the cloned value for the session
             session.bucket_selection_key = response_inner.bucket_selection_key.try_into().unwrap();
             session.entry_u64_count = response_inner.entry_u64_count as usize;
         } else if i > 0 {
             // For subsequent servers, check if their keys are different from first server's keys
             if let Some((first_local_hash_keys, first_bucket_selection_key)) = &first_server_keys {
-                // Check if either the local hash keys or bucket selection key is different
                 let keys_are_different = 
-                    // Check if lengths are different
                     response_inner.local_hash_keys.len() != first_local_hash_keys.len() ||
-                    // Check if bucket selection key is different
                     response_inner.bucket_selection_key != *first_bucket_selection_key ||
-                    // Check if any local hash key is different
                     response_inner.local_hash_keys.iter()
                         .zip(first_local_hash_keys.iter())
                         .any(|(a, b)| a != b);
@@ -261,7 +241,6 @@ pub async fn cleanup_client_session(session: &ClientSession, server_addrs: &[&st
 }
 
 async fn setup_benchmark_session() -> ClientSession {
-    // Initialize a session with the running servers
     initialize_session(&DEFAULT_SERVERS).await.expect("Failed to initialize session")
 }
 
@@ -306,10 +285,8 @@ fn bench_update_servers(c: &mut Criterion) {
     let mut group = c.benchmark_group("Update Servers (upsert=false)");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 3 random keys for testing
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
-    // Test each server individually
     for (server_idx, &server_addr) in DEFAULT_SERVERS.iter().enumerate() {
         let server_addresses = vec![server_addr.to_string()];
         
@@ -323,7 +300,7 @@ fn bench_update_servers(c: &mut Criterion) {
                             query_key.clone(),
                             new_value.clone(),
                             &server_addresses,
-                            false // upsert = false
+                            false 
                         ).await)
                     })
                 });
@@ -339,11 +316,9 @@ fn bench_soft_delete_entry(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Soft Delete Entry");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
-    
-    // Test each server individually
+
     for (server_idx, &server_addr) in DEFAULT_SERVERS.iter().enumerate() {
         let server_addresses = vec![server_addr.to_string()];
         

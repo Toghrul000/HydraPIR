@@ -3,31 +3,26 @@ syntax = "proto3";
 package ms_kpir;
 
 
-// Message for CSV row data
 message CsvRow {
   string key = 1;
   string value = 2;
 }
 
-// Message for server synchronization
 message ServerSync {
   repeated string server_addresses = 1;
 }
 
-// Message for sync response
 message SyncResponse {
   bool success = 1;
   string message = 2;
 }
 
-// Message for client session initialization request
 message ClientSessionInitRequest {
   string client_id = 1;
   bytes aes_key = 2;
   bytes hs_key = 3;
 }
 
-// Message for client session initialization response
 message ClientSessionInitResponse {
   uint32 num_buckets = 1;
   uint32 bucket_size = 2;
@@ -39,14 +34,12 @@ message ClientSessionInitResponse {
 
 }
 
-// Message for single entry update that includes the CSV row and server addresses
 message UpdateSingleEntryRequest {
   CsvRow csv_row = 1;
   bytes deterministic_eviction_seed = 2;
   bool upsert = 3;
 }
 
-// Message for single entry insert that includes the CSV row and server addresses
 message InsertSingleEntryRequest {
   CsvRow csv_row = 1;
   bytes deterministic_eviction_seed = 2;
@@ -66,7 +59,7 @@ message ConfigData {
   uint64 table_size = 1;
   uint64 mask = 2;
   uint64 k_choices = 3;
-  repeated bytes local_hash_keys = 4; // Each 'bytes' entry is expected to be 16 bytes long
+  repeated bytes local_hash_keys = 4; 
   bytes bucket_selection_key = 5;
   uint64 num_total_buckets = 6;
   uint64 slots_per_bucket = 7;
@@ -74,7 +67,7 @@ message ConfigData {
 }
 
 message CuckooKeys {
-  repeated bytes local_hash_keys = 1; // Each 'bytes' entry is expected to be 16 bytes long
+  repeated bytes local_hash_keys = 1; 
   bytes bucket_selection_key = 2;
 }
 
@@ -124,7 +117,7 @@ message BucketBitOptimizedKeys {
 }
 
 
-message DPFKeyBytes {
+message DPFKeyArray {
   uint32 n = 1;
 
   // Fixed-size byte arrays represented as bytes
@@ -152,7 +145,7 @@ message BucketKeys {
 message PrivUpdateRequest {
   string client_id = 1;
   uint32 server_id = 2;
-  repeated DPFKeyBytes update_keys = 3;
+  repeated DPFKeyArray update_keys = 3;
 }
 
 message BucketEvalResult {
@@ -164,13 +157,13 @@ message ServerResponse {
 }
 
 
-// A single chunk of data: an index and a byte array
+
 message ByteShareArrayEntry {
-  uint32 index = 1; // Index in the server's array
-  repeated int64 value = 2;  // The u64 vabyte array itself
+  uint32 index = 1;
+  repeated int64 value = 2;
 }
 
-// Message for client cleanup request
+
 message ClientCleanupRequest {
   string client_id = 1;
 }
@@ -202,7 +195,6 @@ service PIRService {
   // Client session initialization
   rpc InitClientSession(ClientSessionInitRequest) returns (ClientSessionInitResponse);
 
-
   // RPC method where the server receives a PIR Query and returns an Answer.
   rpc PirQuery(BucketKeys) returns (ServerResponse);
 
@@ -222,7 +214,6 @@ service PIRServicePrivateUpdate {
 
   // Client session initialization
   rpc InitClientSession(ClientSessionInitRequest) returns (ClientSessionInitResponse);
-
 
   // RPC method where the server receives a PIR Query and returns an Answer.
   rpc PirQuery(BucketKeys) returns (ServerResponse);

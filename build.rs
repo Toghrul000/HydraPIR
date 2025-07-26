@@ -13,7 +13,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env file
     dotenv().ok();
 
-    // Compile protos
     tonic_build::compile_protos("proto/ms_kpir.proto")?;
 
     // Get environment variables with defaults
@@ -30,7 +29,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bucket_num_option.hash(&mut hasher);
     let config_hash = hasher.finish();
 
-    // Calculate derived values
     let storage_mb: u64 = storage_mb.parse().expect("KPIR_STORAGE_MB must be a valid number");
     let entry_size_bytes: usize = entry_size_bytes.parse().expect("KPIR_ENTRY_SIZE_BYTES must be a valid number");
     let max_rehash_attempts: usize = max_rehash_attempts.parse().expect("KPIR_MAX_REHASH_ATTEMPTS must be a valid number");

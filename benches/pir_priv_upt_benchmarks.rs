@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Benchmark
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use kpir::ms_kpir::pir_service_private_update_client::PirServicePrivateUpdateClient;
-use kpir::ms_kpir::{dpf_key, BucketKeys, ClientSessionInitRequest, DpfKey, DpfKeyBytes, PrivUpdateRequest};
-use kpir::ms_kpir::dpf_key_bytes;
+use kpir::ms_kpir::{dpf_key, BucketKeys, ClientSessionInitRequest, DpfKey, DpfKeyArray, PrivUpdateRequest};
+use kpir::ms_kpir::dpf_key_array;
 use cuckoo_lib::{get_hierarchical_indices, encode_entry, Entry};
 use dpf_half_tree_lib::{dmpf_pir_query_gen, dmpf_pir_reconstruct_servers, dpf_priv_update_gen_buckets};
 use rand::rngs::StdRng;
@@ -260,7 +260,6 @@ async fn execute_private_update(
 
     for (_group_index, addr_chunk) in server_addrs.chunks(2).enumerate() {
         for (server_index, &addr) in addr_chunk.iter().enumerate() {
-            // Clone the Arc (cheap operation)
             let update_keys_0 = Arc::clone(&update_key_0);
             let update_keys_1 = Arc::clone(&update_key_1);
             
@@ -273,13 +272,13 @@ async fn execute_private_update(
                 };
 
                 let update_keys_proto = update_keys.iter().map(|key| {
-                    let cwn = dpf_key_bytes::Cwn {
+                    let cwn = dpf_key_array::Cwn {
                         hcw: key.cw_n.0.to_vec(),
                         lcw0: key.cw_n.1 as u32,
                         lcw1: key.cw_n.2 as u32,
                     };
 
-                    DpfKeyBytes {
+                    DpfKeyArray {
                         n: key.n as u32,
                         seed: key.seed.to_vec(),
                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
@@ -320,8 +319,7 @@ fn bench_dpf_key_generation(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("DPF Key Generation (Private Update)");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -362,8 +360,7 @@ fn bench_server_response_times(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Server Response Times (Private Update)");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -388,8 +385,7 @@ fn bench_individual_server_response_times(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Individual Server Response Times (Private Update)");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 3 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for (group_idx, addr_chunk) in DEFAULT_SERVERS.chunks(2).enumerate() {
@@ -465,8 +461,7 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("Individual Server Private Update");
     group.measurement_time(Duration::from_secs(10));
-    
-    // Generate 2 random keys for testing
+
     let test_keys = generate_random_keys(3, session.num_buckets, session.bucket_size);
     
     for (group_idx, addr_chunk) in DEFAULT_SERVERS.chunks(2).enumerate() {
@@ -489,7 +484,6 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
                                 let aes = create_aes(&session.aes_key);
                                 let target_points = vec![(global_idx as u32, beta)];
 
-                                // Generate DPF keys for the update
                                 let update_keys = dpf_priv_update_gen_buckets::<ENTRY_U64_COUNT>(
                                     &target_points,
                                     session.num_buckets as usize,
@@ -508,13 +502,13 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
                                 let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", addr)).await.expect("Failed to connect");
                                 
                                 let update_keys_proto = update_keys_for_server.iter().map(|key| {
-                                    let cwn = dpf_key_bytes::Cwn {
+                                    let cwn = dpf_key_array::Cwn {
                                         hcw: key.cw_n.0.to_vec(),
                                         lcw0: key.cw_n.1 as u32,
                                         lcw1: key.cw_n.2 as u32,
                                     };
 
-                                    DpfKeyBytes {
+                                    DpfKeyArray {
                                         n: key.n as u32,
                                         seed: key.seed.to_vec(),
                                         cw_levels: key.cw_levels.iter().map(|level| level.to_vec()).collect(),
@@ -531,7 +525,6 @@ fn bench_individual_server_private_update(c: &mut Criterion) {
                                 
                                 black_box(client.private_update(request).await)
                             } else {
-                                // If key not found, return an error response to maintain type consistency
                                 Err(tonic::Status::not_found("Key not found"))
                             }
                         })
@@ -551,7 +544,6 @@ fn bench_private_update(c: &mut Criterion) {
     let mut group = c.benchmark_group("Private Update");
     group.measurement_time(Duration::from_secs(10));
     
-    // Generate 3 random keys for testing
     let test_keys = generate_random_keys(2, session.num_buckets, session.bucket_size);
     
     for key in test_keys.iter() {
@@ -570,7 +562,6 @@ fn bench_private_update(c: &mut Criterion) {
                             "new_value_for_benchmark"
                         ).await)
                     } else {
-                        // If key not found, return Ok(()) to maintain the Result type
                         Ok(())
                     }
                 })

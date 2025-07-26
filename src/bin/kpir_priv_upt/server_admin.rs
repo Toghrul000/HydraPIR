@@ -13,7 +13,6 @@ pub async fn run_admin_client(
 ) -> Result<(), Box<dyn Error>> {
     println!("\n--- Performing Insertions from {} ---", csv_file_path);
 
-    // Check if file exists
     if !std::path::Path::new(csv_file_path).exists() {
         return Err(Box::<dyn Error>::from(format!(
             "CSV file not found at '{}'",
@@ -21,12 +20,10 @@ pub async fn run_admin_client(
         )));
     }
 
-    // Connect to first server
     let first_server_addr = &server_addresses[0];
     let mut client = PirServicePrivateUpdateClient::connect(format!("http://{}", first_server_addr)).await?;
     println!("Connected to server at {}", first_server_addr);
 
-    // Open and read CSV file
     let file = std::fs::File::open(csv_file_path)?;
     let mut rdr = csv::ReaderBuilder::new().has_headers(true).from_reader(file);
 
@@ -76,7 +73,7 @@ pub async fn run_admin_client(
         println!("Client: Finished processing CSV file for streaming.");
     };
 
-    // Send the stream to server and wait for response
+    // Send the stream to server
     let response = client.stream_csv_data(Request::new(outbound)).await?;
     let response = response.into_inner();
     println!("Client: Server acknowledgement: {:?}", response);

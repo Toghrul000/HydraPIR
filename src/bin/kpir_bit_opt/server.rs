@@ -127,7 +127,6 @@ impl BitOptimizedPirService for MyPIRService {
         let num_buckets = *self.num_buckets.lock().await;
         let bucket_size = *self.bucket_size.lock().await;
         
-        // Convert protobuf DPFKey to Rust DPFKey
         let dpf_keys = bucket_keys.into_iter().map(|proto_key| {
             let mut cw_levels = Vec::new();
             for cw in proto_key.cw_levels {
@@ -160,7 +159,6 @@ impl BitOptimizedPirService for MyPIRService {
             })
         }).collect::<Result<Vec<_>, _>>()?;
 
-        // Evaluate the query - using references to table and other data
         let results = dmpf_bit_pir_query_eval::<{ ENTRY_U64_COUNT }>(
             server_id,
             &dpf_keys,
@@ -170,8 +168,7 @@ impl BitOptimizedPirService for MyPIRService {
             &hash_key,
             &aes,
         );
-        
-        // Convert to protobuf response format
+
         let bucket_results = results.into_iter().map(|result| {
             BucketEvalResult {
                 value: result.to_vec(),
@@ -360,7 +357,6 @@ impl BitOptimizedPirService for MyPIRService {
                 println!("Client: Finished preparing all chunks to send.");
             };
 
-            // Send table details to server
             println!("Sending table data to sync server");
             let response = client.stream_byte_arrays(Request::new(outbound_stream)).await
                 .map_err(|e| Status::internal(format!("Failed to sync with server {}: {}", server_addr, e)))?;
@@ -416,9 +412,6 @@ impl BitOptimizedPirService for MyPIRService {
         }))
     }
 
-
-
-
     async fn stream_byte_arrays(
         &self,
         request: Request<tonic::Streaming<ByteArrayEntry>>,
@@ -457,8 +450,7 @@ impl BitOptimizedPirService for MyPIRService {
         request: Request<UpdateSingleEntryRequest>,
     ) -> Result<Response<SyncResponse>, Status> {
         let update_request = request.into_inner();
-        
-        // Unwrap the CsvRow since it's an Option in the generated Rust code
+
         let csv_row = match update_request.csv_row {
             Some(row) => row,
             None => return Err(Status::invalid_argument("Missing CSV row data")),
@@ -500,8 +492,7 @@ impl BitOptimizedPirService for MyPIRService {
         request: Request<InsertSingleEntryRequest>,
     ) -> Result<Response<SyncResponse>, Status> {
         let insert_request = request.into_inner();
-        
-        // Unwrap the CsvRow since it's an Option in the generated Rust code
+
         let csv_row = match insert_request.csv_row {
             Some(row) => row,
             None => return Err(Status::invalid_argument("Missing CSV row data")),
@@ -627,8 +618,7 @@ impl BitOptimizedPirService for MyPIRService {
         println!("Received Cuckoo keys from client");
 
         let mut cuckoo_table = self.cuckoo_table.lock().await;
-        
-        // Convert the received keys to the expected format
+
         cuckoo_table.local_hash_keys = cuckoo_keys.local_hash_keys
             .into_iter()
             .map(|v| v.try_into().expect("Hash key must be 16 bytes"))

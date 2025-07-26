@@ -126,7 +126,6 @@ impl PirService for MyPIRService {
         let num_buckets = *self.num_buckets.lock().await;
         let bucket_size = *self.bucket_size.lock().await;
         
-        // Convert protobuf DPFKey to Rust DPFKey
         let dpf_keys = bucket_keys.into_iter().map(|proto_key| {
             let mut cw_levels = Vec::new();
             for cw in proto_key.cw_levels {
@@ -159,7 +158,6 @@ impl PirService for MyPIRService {
             })
         }).collect::<Result<Vec<_>, _>>()?;
 
-        // Evaluate the query - using references to table and other data
         let results = dmpf_pir_query_eval::<{ ENTRY_U64_COUNT }>(
             server_id,
             &dpf_keys,
@@ -170,14 +168,12 @@ impl PirService for MyPIRService {
             &aes,
         );
         
-        // Convert to protobuf response format
         let bucket_results = results.into_iter().map(|result| {
             BucketEvalResult {
                 value: result.to_vec(),
             }
         }).collect();
         
-        // Return the server response
         let answer = ServerResponse {
             bucket_result: bucket_results,
         };
@@ -456,8 +452,7 @@ impl PirService for MyPIRService {
         request: Request<UpdateSingleEntryRequest>,
     ) -> Result<Response<SyncResponse>, Status> {
         let update_request = request.into_inner();
-        
-        // Unwrap the CsvRow since it's an Option in the generated Rust code
+
         let csv_row = match update_request.csv_row {
             Some(row) => row,
             None => return Err(Status::invalid_argument("Missing CSV row data")),
@@ -501,7 +496,6 @@ impl PirService for MyPIRService {
     ) -> Result<Response<SyncResponse>, Status> {
         let insert_request = request.into_inner();
         
-        // Unwrap the CsvRow since it's an Option in the generated Rust code
         let csv_row = match insert_request.csv_row {
             Some(row) => row,
             None => return Err(Status::invalid_argument("Missing CSV row data")),
@@ -530,9 +524,6 @@ impl PirService for MyPIRService {
             }
         }
     }
-
-
-
 
     async fn soft_delete_entry(
         &self,
@@ -577,11 +568,9 @@ impl PirService for MyPIRService {
         let bucket_size = *self.bucket_size.lock().await as u32;
         let bucket_bits = *self.bucket_bits.lock().await;
         let n_bits = *self.n_bits.lock().await;
-        
-        // Get hash keys from Cuckoo table
+
         let hash_keys = {
             let cuckoo_table = self.cuckoo_table.lock().await;
-
             (cuckoo_table.bucket_selection_key.to_vec(), cuckoo_table.local_hash_keys.iter().map(|key| key.to_vec()).collect())
         };
         
@@ -631,7 +620,6 @@ impl PirService for MyPIRService {
 
         let mut cuckoo_table = self.cuckoo_table.lock().await;
         
-        // Convert the received keys to the expected format
         cuckoo_table.local_hash_keys = cuckoo_keys.local_hash_keys
             .into_iter()
             .map(|v| v.try_into().expect("Hash key must be 16 bytes"))
